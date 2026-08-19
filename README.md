@@ -72,5 +72,3 @@ cp target/release/libdbx_ohos.so \
 ## License
 
 本项目使用 **Apache-2.0** 许可证。
-
-上游 `dbx` 项目本身是 Apache-2.0，本仓库包含上游源码（submodule）和 HarmonyOS 移植代码，继续使用 Apache-2.0 是正确且合规的。根目录 `LICENSE` 即 Apache-2.0 全文。
