@@ -1,0 +1,1 @@
+import{r as e}from"./button-Bk8aVA_e.js";var t=e(`text-align-start`,[[`path`,{d:`M21 5H3`,key:`1fi0y6`}],[`path`,{d:`M15 12H3`,key:`6jk70r`}],[`path`,{d:`M17 19H3`,key:`z6ezky`}]]);export{t};

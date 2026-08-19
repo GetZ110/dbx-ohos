@@ -1,0 +1,4 @@
+[submodule "upstream/dbx"]
+	path = upstream/dbx
+	url = git@github.com:GetZ110/dbx.git
+	branch = harmonyos-port

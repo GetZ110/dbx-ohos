@@ -1,0 +1,16 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "DBX HarmonyOS Web shell"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "DBX local HTTP service + ArkUI Web"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "DBX"
+    }
+  ]
+}

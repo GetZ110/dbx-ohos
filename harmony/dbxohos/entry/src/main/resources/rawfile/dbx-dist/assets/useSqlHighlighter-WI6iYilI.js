@@ -1,0 +1,1 @@
+import{Jt as e,Sn as t}from"./ui-_QCPiEHC.js";import{t as n}from"./useTheme-D68bbBo-.js";import{t as r}from"./sqlHighlighter-DDhatVSF.js";function i(){let{isDark:i}=n(),a=t();e(async()=>{a.value=await r({appearance:()=>i.value?`dark`:`light`})});function o(e){return a.value?.(e)??e}return{highlight:o,sqlHighlighter:a}}export{i as t};
