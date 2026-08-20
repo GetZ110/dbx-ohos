@@ -61,6 +61,7 @@ private windowInjectionScript: string =
     'var minIcon=svgIcon(\'<line x1="5" y1="12" x2="19" y2="12"/>\');' +
     'var closeIcon=svgIcon(\'<path d="M18 6 6 18"/><path d="m6 6 12 12"/>\');' +
     'var lastMaxToggle=0;' +
+    'var dragStartX=0,dragStartY=0,dragMoved=false;' +
     'var showMaxIcon=(dbxWin.isMaximized&&dbxWin.isMaximized())?restoreIcon:maxIcon;' +
     'wrap.innerHTML=\'<button data-win="max" title="最大化/还原">\'+showMaxIcon+\'</button>\'+\'<button data-win="min" title="最小化">\'+minIcon+\'</button>\'+\'<button data-win="close" class="dbx-win-close" title="关闭">\'+closeIcon+\'</button>\';' +
     'bar.appendChild(wrap);' +
@@ -71,10 +72,21 @@ private windowInjectionScript: string =
     'if(act==="min")w.minimize();else if(act==="max"){var now=Date.now();if(now-lastMaxToggle<300)return;lastMaxToggle=now;w.toggleMaximize();var mb=wrap.querySelector("button[data-win=\\"max\\"]");if(mb)mb.innerHTML=(w.isMaximized&&w.isMaximized())?restoreIcon:maxIcon;}else if(act==="close")w.close();' +
     '});' +
     'bar.addEventListener("mousedown",function(e){' +
-    'if(e.button!==0)return;' +
+    'if(e.button!==0)return;var t=e.target;' +
+    'if(t.closest&&t.closest(".dbx-window-controls,button,a,input,select,textarea,[contenteditable=\\"true\\"],[role=\\"button\\"]"))return;' +
+    'dragStartX=e.clientX;dragStartY=e.clientY;dragMoved=false;' +
+    '});' +
+    'bar.addEventListener("mousemove",function(e){' +
+    'if(dragStartX===0&&dragStartY===0)return;' +
+    'var dx=e.clientX-dragStartX,dy=e.clientY-dragStartY;' +
+    'if(!dragMoved&&Math.abs(dx)+Math.abs(dy)>=4){dragMoved=true;var w=window.dbxNativeWindow;if(w&&w.startMove)w.startMove();}' +
+    '});' +
+    'document.addEventListener("mouseup",function(){dragStartX=0;dragStartY=0;dragMoved=false;});' +
+    'bar.addEventListener("click",function(e){' +
     'var t=e.target;' +
     'if(t.closest&&t.closest(".dbx-window-controls,button,a,input,select,textarea,[contenteditable=\\"true\\"],[role=\\"button\\"]"))return;' +
-    'var w=window.dbxNativeWindow;if(w&&w.startMove)w.startMove();' +
+    'if(dragMoved)return;' +
+    'var now=Date.now();if(now-lastMaxToggle<300)return;lastMaxToggle=now;var w=window.dbxNativeWindow;if(w&&w.toggleMaximize)w.toggleMaximize();' +
     '});' +
     'bar.addEventListener("dblclick",function(e){' +
     'var t=e.target;' +

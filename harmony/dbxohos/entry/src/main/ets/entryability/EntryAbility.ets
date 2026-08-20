@@ -177,6 +177,11 @@ export default class EntryAbility extends UIAbility {
       // enabling both paths causes a double toggle (maximize plays and then
       // immediately restores).
       mainWindow.setWindowLayoutFullScreen(true);
+      // Do not show the system title bar / dock when the mouse hits the screen
+      // edge while the window is maximized/immersive.
+      mainWindow.setTitleAndDockHoverShown(false, false).catch((err: BusinessError) => {
+        hilog.warn(DOMAIN, TAG, 'setTitleAndDockHoverShown failed: %{public}s', err.message);
+      });
       hilog.info(DOMAIN, TAG, '%{public}s', 'Immersive window mode applied');
     } catch (err) {
       const e = err as BusinessError;
