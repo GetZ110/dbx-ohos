@@ -187,21 +187,15 @@ export default class EntryAbility extends UIAbility {
       return;
     }
     this.closing = true;
-    hilog.info(DOMAIN, TAG, '%{public}s', 'Window close requested; stopping local service and exiting');
-    this.stopLocalService();
+    hilog.info(DOMAIN, TAG, '%{public}s', 'Window close requested; scheduling process exit');
 
-    const context = this.context as common.UIAbilityContext;
-    context.terminateSelf().then(() => {
-      hilog.info(DOMAIN, TAG, '%{public}s', 'terminateSelf succeeded');
-      // The ability is destroyed. If the OS keeps the process cached in the
-      // task manager, force-kill it as a safety net so the process disappears.
-      setTimeout(() => {
-        this.forceExit();
-      }, 800);
-    }).catch((err: BusinessError) => {
-      hilog.error(DOMAIN, TAG, 'terminateSelf failed: %{public}s', JSON.stringify(err));
+    // Do NOT stop the local server synchronously here. NativeBridge.stopServer()
+    // cancels the Tokio/Axum graceful shutdown and then joins the server thread;
+    // active WebSocket/SSE connections can keep that join blocked and freeze the
+    // UI thread. The process is about to be killed anyway, so force-exit directly.
+    setTimeout(() => {
       this.forceExit();
-    });
+    }, 50);
   }
 
   private forceExit(): void {
