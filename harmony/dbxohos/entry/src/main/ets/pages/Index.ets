@@ -38,11 +38,11 @@ private windowInjectionScript: string =
     'if(!document.getElementById("dbx-win-style")&&document.head){' +
     'var s=document.createElement("style");s.id="dbx-win-style";' +
     's.textContent=' +
-    '".dbx-window-controls{display:inline-flex;align-items:center;height:100%;margin-left:6px;user-select:none;-webkit-user-select:none;flex-shrink:0;}"+' +
-    '".dbx-window-controls button{width:46px;height:100%;display:inline-flex;align-items:center;justify-content:center;border:none;background:transparent;color:currentColor;border-radius:0;cursor:default;font-size:14px;line-height:1;padding:0;}"+' +
-    '".dbx-window-controls button:hover{background:rgba(128,128,128,0.2);}"+' +
-    '".dbx-window-controls button:active{background:rgba(128,128,128,0.3);}"+' +
-    '".dbx-window-controls .dbx-win-close:hover{background:rgba(232,17,35,0.9);color:#fff;}";' +
+    '".dbx-window-controls{display:inline-flex;align-items:center;height:100%;margin-left:2px;user-select:none;-webkit-user-select:none;flex-shrink:0;}"+' +
+    '".dbx-window-controls button{width:32px;height:32px;display:inline-flex;align-items:center;justify-content:center;border:none;background:transparent;color:currentColor;border-radius:6px;cursor:default;font-size:14px;line-height:1;padding:0;margin:0 1px;}"+' +
+    '".dbx-window-controls button:hover{background:rgba(128,128,128,0.15);}"+' +
+    '".dbx-window-controls button:active{background:rgba(128,128,128,0.25);}"+' +
+    '".dbx-window-controls .dbx-win-close:hover{background:rgba(224,49,49,0.1);color:#e5484d;}";' +
     'document.head.appendChild(s);' +
     '}' +
     '}' +
@@ -56,10 +56,10 @@ private windowInjectionScript: string =
     'wrap.className="dbx-window-controls";' +
     'var dbxWin=window.dbxNativeWindow||{};' +
     'function svgIcon(inner){return \'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">\'+inner+\'</svg>\';}' +
-    'var maxIcon=svgIcon(\'<rect x="3" y="3" width="18" height="18" rx="1"/>\');' +
-    'var restoreIcon=svgIcon(\'<rect x="5" y="9" width="11" height="11" rx="1"/><path d="M8 4h9a3 3 0 0 1 3 3v9"/>\');' +
-    'var minIcon=svgIcon(\'<line x1="5" y1="12" x2="19" y2="12"/>\');' +
-    'var closeIcon=svgIcon(\'<line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/>\');' +
+    'var maxIcon=svgIcon(\'<path d="M15 3h6v6"/><path d="m21 3-7 7"/><path d="m3 21 7-7"/><path d="M9 21H3v-6"/>\');' +
+    'var restoreIcon=svgIcon(\'<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>\');' +
+    'var minIcon=svgIcon(\'<path d="m14 10 7-7"/><path d="M20 10h-6V4"/><path d="m3 21 7-7"/><path d="M4 14h6v6"/>\');' +
+    'var closeIcon=svgIcon(\'<path d="M18 6 6 18"/><path d="m6 6 12 12"/>\');' +
     'var showMaxIcon=(dbxWin.isMaximized&&dbxWin.isMaximized())?restoreIcon:maxIcon;' +
     'wrap.innerHTML=\'<button data-win="max" title="最大化/还原">\'+showMaxIcon+\'</button>\'+\'<button data-win="min" title="最小化">\'+minIcon+\'</button>\'+\'<button data-win="close" class="dbx-win-close" title="关闭">\'+closeIcon+\'</button>\';' +
     'bar.appendChild(wrap);' +

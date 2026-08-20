@@ -171,15 +171,11 @@ export default class EntryAbility extends UIAbility {
       // Hide the default right-side window controls; the web toolbar shows
       // custom minimize/maximize/close buttons on the left instead.
       mainWindow.setWindowTitleButtonVisible(false, false, false);
-      // Allow native title-bar dragging/double-click maximize when the system
-      // still provides a title-move region.
-      mainWindow.setWindowTitleMoveEnabled(true);
-      // Also enable generic window dragging; on newer 2-in-1 systems this lets
-      // the web toolbar (custom title bar) move the window directly.
-      mainWindow.enableDrag(true).catch((err: BusinessError) => {
-        hilog.warn(DOMAIN, TAG, 'enableDrag failed: %{public}s', err.message);
-      });
       // Make the page layout occupy the whole window (no separate title bar).
+      // Deliberately do NOT enable system title-move/drag handling: the app
+      // toolbar handles drag/maximize through the injected JS bridge, and
+      // enabling both paths causes a double toggle (maximize plays and then
+      // immediately restores).
       mainWindow.setWindowLayoutFullScreen(true);
       hilog.info(DOMAIN, TAG, '%{public}s', 'Immersive window mode applied');
     } catch (err) {
