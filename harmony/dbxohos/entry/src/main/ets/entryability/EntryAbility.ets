@@ -15,6 +15,7 @@ const TAG = 'DBX_ABILITY';
 
 export default class EntryAbility extends UIAbility {
   private windowStage: window.WindowStage | null = null;
+  private mainWindow: window.Window | null = null;
   private serviceActive: boolean = false;
   private serviceStarting: boolean = false;
   private reloadToken: number = 0;
@@ -44,6 +45,7 @@ export default class EntryAbility extends UIAbility {
 
     try {
       const mainWindow = windowStage.getMainWindowSync();
+      this.mainWindow = mainWindow;
       WindowBridge.init(mainWindow, () => {
         this.handleWindowClose();
       });
@@ -279,6 +281,11 @@ export default class EntryAbility extends UIAbility {
         return;
       }
       hilog.info(DOMAIN, TAG, 'Succeeded in loading the content.');
+      // Re-apply immersive settings once content is actually loaded; some devices
+      // only honor decor visibility changes after the window has content.
+      if (this.mainWindow) {
+        this.applyImmersiveWindow(this.mainWindow);
+      }
     });
   }
 }
