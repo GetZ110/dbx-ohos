@@ -17,6 +17,8 @@ export default class EntryAbility extends UIAbility {
   private serviceActive: boolean = false;
   private serviceStarting: boolean = false;
   private reloadToken: number = 0;
+  private closeListenerBound: boolean = false;
+  private closing: boolean = false;
 
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     try {
@@ -35,6 +37,7 @@ export default class EntryAbility extends UIAbility {
   onWindowStageCreate(windowStage: window.WindowStage): void {
     hilog.info(DOMAIN, TAG, '%{public}s', 'Ability onWindowStageCreate');
     this.windowStage = windowStage;
+    this.registerWindowCloseListener();
 
     this.startLocalService(true).catch((err: BusinessError) => {
       hilog.error(DOMAIN, TAG, 'startLocalService before loadContent failed: %{public}s', JSON.stringify(err));
@@ -43,7 +46,7 @@ export default class EntryAbility extends UIAbility {
   }
 
   onWindowStageDestroy(): void {
-    this.windowStage = null;
+    this.unregisterWindowCloseListener();
     hilog.info(DOMAIN, TAG, '%{public}s', 'Ability onWindowStageDestroy');
   }
 
@@ -59,6 +62,9 @@ export default class EntryAbility extends UIAbility {
 
   onBackground(): void {
     hilog.info(DOMAIN, TAG, '%{public}s', 'Ability onBackground');
+    if (this.closing) {
+      return;
+    }
     if (this.serviceActive) {
       this.stopLocalService();
     }
@@ -80,6 +86,9 @@ export default class EntryAbility extends UIAbility {
       const distDir: string = `${filesDir}/${AppConstants.DIST_DIR_NAME}`;
       const dataDir: string = `${filesDir}/dbx-data`;
       await RawFileCopier.copyRawDir(context, AppConstants.RAW_DIST_PATH, distDir);
+      if (this.closing) {
+        return;
+      }
 
       let nativeStarted: boolean = false;
       if (NativeBridge.isAvailable()) {
@@ -111,6 +120,9 @@ export default class EntryAbility extends UIAbility {
       if (!ready) {
         hilog.warn(DOMAIN, TAG, 'Server health check timed out; Web may need manual retry.');
       }
+      if (this.closing) {
+        return;
+      }
 
       this.serviceActive = true;
       if (loadPage) {
@@ -132,6 +144,69 @@ export default class EntryAbility extends UIAbility {
     NativeBridge.stopMcpServer();
     this.serviceActive = false;
     hilog.info(DOMAIN, TAG, '%{public}s', 'Local service stopped');
+  }
+
+  private registerWindowCloseListener(): void {
+    const stage = this.windowStage;
+    if (!stage || this.closeListenerBound) {
+      return;
+    }
+    try {
+      stage.on('windowStageClose', () => {
+        this.handleWindowClose();
+      });
+      this.closeListenerBound = true;
+      hilog.info(DOMAIN, TAG, '%{public}s', 'Window close listener registered');
+    } catch (err) {
+      const e = err as BusinessError;
+      hilog.warn(DOMAIN, TAG, 'Register windowStageClose listener failed: %{public}s', JSON.stringify(e));
+    }
+  }
+
+  private unregisterWindowCloseListener(): void {
+    if (this.closeListenerBound && this.windowStage) {
+      try {
+        this.windowStage.off('windowStageClose');
+      } catch (err) {
+        const e = err as BusinessError;
+        hilog.warn(DOMAIN, TAG, 'Unregister windowStageClose listener failed: %{public}s', JSON.stringify(e));
+      }
+      this.closeListenerBound = false;
+    }
+    this.windowStage = null;
+  }
+
+  private handleWindowClose(): void {
+    if (this.closing) {
+      return;
+    }
+    this.closing = true;
+    hilog.info(DOMAIN, TAG, '%{public}s', 'Window close requested; stopping local service and exiting');
+    this.stopLocalService();
+
+    const context = this.context as common.UIAbilityContext;
+    context.terminateSelf().then(() => {
+      hilog.info(DOMAIN, TAG, '%{public}s', 'terminateSelf succeeded');
+      // The ability is destroyed. If the OS keeps the process cached in the
+      // task manager, force-kill it as a safety net so the process disappears.
+      setTimeout(() => {
+        this.forceExit();
+      }, 800);
+    }).catch((err: BusinessError) => {
+      hilog.error(DOMAIN, TAG, 'terminateSelf failed: %{public}s', JSON.stringify(err));
+      this.forceExit();
+    });
+  }
+
+  private forceExit(): void {
+    try {
+      const appContext = this.context.getApplicationContext();
+      appContext.killAllProcesses(true);
+      hilog.info(DOMAIN, TAG, '%{public}s', 'killAllProcesses called');
+    } catch (err) {
+      const e = err as BusinessError;
+      hilog.error(DOMAIN, TAG, 'killAllProcesses failed: %{public}s', JSON.stringify(e));
+    }
   }
 
   private reloadMainPage(): void {
