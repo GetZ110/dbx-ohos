@@ -48,6 +48,12 @@ export default class EntryAbility extends UIAbility {
   onWindowStageDestroy(): void {
     this.unregisterWindowCloseListener();
     hilog.info(DOMAIN, TAG, '%{public}s', 'Ability onWindowStageDestroy');
+    if (!this.closing) {
+      // Some devices/versions deliver window destruction without the
+      // windowStageClose event. Treat an unexpected window-stage destroy as
+      // an explicit close so the DBX process does not stay alive.
+      this.handleWindowClose();
+    }
   }
 
   onForeground(): void {
