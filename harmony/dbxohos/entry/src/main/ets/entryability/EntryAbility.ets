@@ -7,6 +7,7 @@ import { RawFileCopier } from '../services/RawFileCopier';
 import { HttpServer } from '../services/HttpServer';
 import { ServerHealthChecker } from '../services/ServerHealthChecker';
 import { ThemePrefs } from '../services/ThemePrefs';
+import { WindowBridge } from '../services/WindowBridge';
 import { NativeBridge } from '../native/NativeBridge';
 
 const DOMAIN = 0xDB3;
@@ -40,6 +41,17 @@ export default class EntryAbility extends UIAbility {
     hilog.info(DOMAIN, TAG, '%{public}s', 'Ability onWindowStageCreate');
     this.windowStage = windowStage;
     this.registerWindowCloseListener();
+
+    try {
+      const mainWindow = windowStage.getMainWindowSync();
+      WindowBridge.init(mainWindow, () => {
+        this.handleWindowClose();
+      });
+      this.applyImmersiveWindow(mainWindow);
+    } catch (err) {
+      const e = err as BusinessError;
+      hilog.warn(DOMAIN, TAG, 'WindowBridge/immersive setup failed: %{public}s', e.message);
+    }
 
     this.startLocalService(true).catch((err: BusinessError) => {
       hilog.error(DOMAIN, TAG, 'startLocalService before loadContent failed: %{public}s', JSON.stringify(err));
@@ -143,6 +155,34 @@ export default class EntryAbility extends UIAbility {
       }
     } finally {
       this.serviceStarting = false;
+    }
+  }
+
+  private applyImmersiveWindow(mainWindow: window.Window): void {
+    try {
+      // Immersive 2-in-1 layout: hide the system title bar/decor so the web
+      // app toolbar can act as the application title bar.
+      mainWindow.setWindowDecorVisible(false);
+      // Keep a sane reserved height for the system three-button hit area if the
+      // device still renders it; our web injection shows custom left controls.
+      mainWindow.setWindowDecorHeight(40);
+      // Hide the default right-side window controls; the web toolbar shows
+      // custom minimize/maximize/close buttons on the left instead.
+      mainWindow.setWindowTitleButtonVisible(false, false, false);
+      // Allow native title-bar dragging/double-click maximize when the system
+      // still provides a title-move region.
+      mainWindow.setWindowTitleMoveEnabled(true);
+      // Also enable generic window dragging; on newer 2-in-1 systems this lets
+      // the web toolbar (custom title bar) move the window directly.
+      mainWindow.enableDrag(true).catch((err: BusinessError) => {
+        hilog.warn(DOMAIN, TAG, 'enableDrag failed: %{public}s', err.message);
+      });
+      // Make the page layout occupy the whole window (no separate title bar).
+      mainWindow.setWindowLayoutFullScreen(true);
+      hilog.info(DOMAIN, TAG, '%{public}s', 'Immersive window mode applied');
+    } catch (err) {
+      const e = err as BusinessError;
+      hilog.warn(DOMAIN, TAG, 'applyImmersiveWindow partial failure: %{public}s', e.message);
     }
   }
 

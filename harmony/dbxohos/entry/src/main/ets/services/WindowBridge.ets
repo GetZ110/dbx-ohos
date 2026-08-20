@@ -1,0 +1,107 @@
+import { window } from '@kit.ArkUI';
+import { hilog } from '@kit.PerformanceAnalysisKit';
+import { BusinessError } from '@kit.BasicServicesKit';
+
+const DOMAIN = 0xDB8;
+const TAG = 'DBX_WINDOW';
+
+/**
+ * Native window-control bridge exposed to the Web page as `window.dbxNativeWindow`.
+ *
+ * The HarmonyOS 2-in-1 immersive layout hides the system title bar/decor, and
+ * the DBX web toolbar takes over as the application title bar. This bridge
+ * provides the window actions used by the small left-side control buttons
+ * injected into the web toolbar: minimize, maximize/restore, close and drag.
+ */
+export class WindowBridge {
+  private static mainWindow: window.Window | null = null;
+  private static closeHandler: (() => void) | null = null;
+  private static maximized: boolean = false;
+  private static statusListenerBound: boolean = false;
+
+  /**
+   * Called from EntryAbility once the main window is available.
+   */
+  static init(mainWindow: window.Window, closeHandler: () => void): void {
+    WindowBridge.mainWindow = mainWindow;
+    WindowBridge.closeHandler = closeHandler;
+    WindowBridge.maximized = false;
+
+    if (!WindowBridge.statusListenerBound) {
+      try {
+        mainWindow.on('windowStatusChange', (status: window.WindowStatusType) => {
+          WindowBridge.maximized = status === window.WindowStatusType.MAXIMIZE ||
+            status === window.WindowStatusType.FULL_SCREEN;
+          hilog.info(DOMAIN, TAG, 'window status changed: %{public}d', status);
+        });
+        WindowBridge.statusListenerBound = true;
+      } catch (err) {
+        const e = err as BusinessError;
+        hilog.warn(DOMAIN, TAG, 'windowStatusChange listener registration failed: %{public}s', e.message);
+      }
+    }
+  }
+
+  /**
+   * Minimize the main window.
+   */
+  minimize(): void {
+    const win = WindowBridge.mainWindow;
+    if (!win) {
+      return;
+    }
+    win.minimize().catch((err: BusinessError) => {
+      hilog.warn(DOMAIN, TAG, 'minimize failed: %{public}s', err.message);
+    });
+  }
+
+  /**
+   * Toggle maximize / restore.
+   */
+  toggleMaximize(): void {
+    const win = WindowBridge.mainWindow;
+    if (!win) {
+      return;
+    }
+    if (WindowBridge.maximized) {
+      win.recover().catch((err: BusinessError) => {
+        hilog.warn(DOMAIN, TAG, 'restore failed: %{public}s', err.message);
+      });
+    } else {
+      win.maximize().catch((err: BusinessError) => {
+        hilog.warn(DOMAIN, TAG, 'maximize failed: %{public}s', err.message);
+      });
+    }
+  }
+
+  /**
+   * Close the app through the same path used by the window close button.
+   */
+  close(): void {
+    const handler = WindowBridge.closeHandler;
+    if (handler) {
+      handler();
+    }
+  }
+
+  /**
+   * Start a native window drag. The Web UI calls this from a mousedown on the
+   * app toolbar (the custom title bar area).
+   */
+  startMove(): void {
+    const win = WindowBridge.mainWindow;
+    if (!win) {
+      return;
+    }
+    win.startMoving().catch((err: BusinessError) => {
+      hilog.warn(DOMAIN, TAG, 'startMoving failed: %{public}s', err.message);
+    });
+  }
+
+  /**
+   * Lets the injected UI show the correct maximize/restore icon.
+   */
+  isMaximized(): boolean {
+    return WindowBridge.maximized;
+  }
+}

@@ -2,6 +2,7 @@ import { webview } from '@kit.ArkWeb';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { AppConstants } from '../common/Constants';
 import { WebPrefsBridge } from '../services/WebPrefsBridge';
+import { WindowBridge } from '../services/WindowBridge';
 
 const DOMAIN = 0xDB2;
 const TAG = 'DBX_PAGE';
@@ -30,6 +31,50 @@ struct Index {
   @StorageProp('dbx_reload_token') @Watch('onReloadTokenChanged') reloadToken: number = 0;
   private controller: webview.WebviewController = new webview.WebviewController();
   private prefsBridge: WebPrefsBridge = new WebPrefsBridge();
+  private windowBridge: WindowBridge = new WindowBridge();
+  private windowInjectionScript: string =
+    '(function(){' +
+    'var style=document.createElement("style");' +
+    'style.textContent=' +
+    '".dbx-window-controls{display:inline-flex;align-items:center;height:100%;margin-left:6px;user-select:none;-webkit-user-select:none;flex-shrink:0;}"+' +
+    '".dbx-window-controls button{width:34px;height:28px;display:inline-flex;align-items:center;justify-content:center;border:none;background:transparent;color:currentColor;border-radius:6px;cursor:default;font-size:14px;line-height:1;padding:0;}"+' +
+    '".dbx-window-controls button:hover{background:rgba(128,128,128,0.2);}"+' +
+    '".dbx-window-controls button:active{background:rgba(128,128,128,0.3);}"+' +
+    '".dbx-window-controls .dbx-win-close:hover{background:rgba(232,17,35,0.9);color:#fff;}";' +
+    'document.head.appendChild(style);' +
+    'function inject(){' +
+    'var bar=document.querySelector(".app-toolbar");' +
+    'if(!bar||document.getElementById("dbx-window-controls"))return;' +
+    'try{' +
+    'var wrap=document.createElement("div");' +
+    'wrap.id="dbx-window-controls";' +
+    'wrap.className="dbx-window-controls";' +
+    'wrap.innerHTML=' +
+    '"<button data-win=\\"min\\" title=\\"最小化\\">&#8211;</button>"+' +
+    '"<button data-win=\\"max\\" title=\\"最大化/还原\\">&#9633;</button>"+' +
+    '"<button data-win=\\"close\\" class=\\"dbx-win-close\\" title=\\"关闭\\">&#10005;</button>";' +
+    'bar.appendChild(wrap);' +
+    'wrap.addEventListener("click",function(e){' +
+    'var t=e.target.closest("button");if(!t)return;' +
+    'var act=t.getAttribute("data-win");var w=window.dbxNativeWindow;if(!w)return;' +
+    'if(act==="min")w.minimize();else if(act==="max")w.toggleMaximize();else if(act==="close")w.close();' +
+    '});' +
+    'bar.addEventListener("mousedown",function(e){' +
+    'if(e.button!==0)return;' +
+    'var t=e.target;' +
+    'if(t.closest&&t.closest(".dbx-window-controls,button,a,input,select,textarea,[contenteditable=\\"true\\"],[role=\\"button\\"]"))return;' +
+    'var w=window.dbxNativeWindow;if(w&&w.startMove)w.startMove();' +
+    '});' +
+    'bar.addEventListener("dblclick",function(e){' +
+    'var t=e.target;' +
+    'if(t.closest&&t.closest(".dbx-window-controls,button,a,input,select,textarea,[contenteditable=\\"true\\"]"))return;' +
+    'var w=window.dbxNativeWindow;if(w&&w.toggleMaximize)w.toggleMaximize();' +
+    '});' +
+    '}catch(e){}' +
+    '}' +
+    'if(document.getElementById("app"))inject();else document.addEventListener("DOMContentLoaded",inject);' +
+    'if(window.MutationObserver){var mo=new MutationObserver(inject);mo.observe(document.documentElement,{childList:true,subtree:true});}' +
+    '})();';
   private prefsRestoreScript: string =
     '(function(){' +
     'try{' +
@@ -75,8 +120,17 @@ struct Index {
           methodList: ['getPref', 'savePref'],
           controller: this.controller
         })
+        .javaScriptProxy({
+          object: this.windowBridge,
+          name: 'dbxNativeWindow',
+          methodList: ['minimize', 'toggleMaximize', 'close', 'startMove', 'isMaximized'],
+          controller: this.controller
+        })
         .javaScriptOnDocumentStart([{
           script: this.prefsRestoreScript,
+          scriptRules: ['*']
+        }, {
+          script: this.windowInjectionScript,
           scriptRules: ['*']
         }])
         .onlineImageAccess(true)
