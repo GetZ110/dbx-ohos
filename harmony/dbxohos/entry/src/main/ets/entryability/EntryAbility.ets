@@ -30,7 +30,9 @@ export default class EntryAbility extends UIAbility {
   }
 
   onDestroy(): void {
-    this.stopLocalService();
+    if (!this.closing) {
+      this.stopLocalService();
+    }
     hilog.info(DOMAIN, TAG, '%{public}s', 'Ability onDestroy');
   }
 
@@ -201,11 +203,22 @@ export default class EntryAbility extends UIAbility {
   private forceExit(): void {
     try {
       const appContext = this.context.getApplicationContext();
-      appContext.killAllProcesses(true);
-      hilog.info(DOMAIN, TAG, '%{public}s', 'killAllProcesses called');
+      appContext.killAllProcesses(true).then(() => {
+        hilog.info(DOMAIN, TAG, '%{public}s', 'killAllProcesses called');
+      }).catch((err: BusinessError) => {
+        hilog.error(DOMAIN, TAG, 'killAllProcesses failed: %{public}s', JSON.stringify(err));
+        const context = this.context as common.UIAbilityContext;
+        context.terminateSelf().catch((e: BusinessError) => {
+          hilog.error(DOMAIN, TAG, 'terminateSelf fallback failed: %{public}s', JSON.stringify(e));
+        });
+      });
     } catch (err) {
       const e = err as BusinessError;
-      hilog.error(DOMAIN, TAG, 'killAllProcesses failed: %{public}s', JSON.stringify(e));
+      hilog.error(DOMAIN, TAG, 'killAllProcesses threw: %{public}s', JSON.stringify(e));
+      const context = this.context as common.UIAbilityContext;
+      context.terminateSelf().catch((e2: BusinessError) => {
+        hilog.error(DOMAIN, TAG, 'terminateSelf fallback failed: %{public}s', JSON.stringify(e2));
+      });
     }
   }
 
