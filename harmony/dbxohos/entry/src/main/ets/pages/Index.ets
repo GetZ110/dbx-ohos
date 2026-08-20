@@ -56,10 +56,11 @@ private windowInjectionScript: string =
     'wrap.className="dbx-window-controls";' +
     'var dbxWin=window.dbxNativeWindow||{};' +
     'function svgIcon(inner){return \'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">\'+inner+\'</svg>\';}' +
-    'var maxIcon=svgIcon(\'<path d="M15 3h6v6"/><path d="m21 3-7 7"/><path d="m3 21 7-7"/><path d="M9 21H3v-6"/>\');' +
-    'var restoreIcon=svgIcon(\'<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>\');' +
-    'var minIcon=svgIcon(\'<path d="m14 10 7-7"/><path d="M20 10h-6V4"/><path d="m3 21 7-7"/><path d="M4 14h6v6"/>\');' +
+    'var maxIcon=svgIcon(\'<rect x="3" y="3" width="18" height="18" rx="1"/>\');' +
+    'var restoreIcon=svgIcon(\'<rect width="14" height="14" x="8" y="8" rx="1" ry="1"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>\');' +
+    'var minIcon=svgIcon(\'<line x1="5" y1="12" x2="19" y2="12"/>\');' +
     'var closeIcon=svgIcon(\'<path d="M18 6 6 18"/><path d="m6 6 12 12"/>\');' +
+    'var lastMaxToggle=0;' +
     'var showMaxIcon=(dbxWin.isMaximized&&dbxWin.isMaximized())?restoreIcon:maxIcon;' +
     'wrap.innerHTML=\'<button data-win="max" title="最大化/还原">\'+showMaxIcon+\'</button>\'+\'<button data-win="min" title="最小化">\'+minIcon+\'</button>\'+\'<button data-win="close" class="dbx-win-close" title="关闭">\'+closeIcon+\'</button>\';' +
     'bar.appendChild(wrap);' +
@@ -67,7 +68,7 @@ private windowInjectionScript: string =
     'wrap.addEventListener("click",function(e){' +
     'var t=e.target.closest("button");if(!t)return;' +
     'var act=t.getAttribute("data-win");var w=window.dbxNativeWindow;if(!w)return;' +
-    'if(act==="min")w.minimize();else if(act==="max"){w.toggleMaximize();var mb=wrap.querySelector("button[data-win=\\"max\\"]");if(mb)mb.innerHTML=(w.isMaximized&&w.isMaximized())?restoreIcon:maxIcon;}else if(act==="close")w.close();' +
+    'if(act==="min")w.minimize();else if(act==="max"){var now=Date.now();if(now-lastMaxToggle<300)return;lastMaxToggle=now;w.toggleMaximize();var mb=wrap.querySelector("button[data-win=\\"max\\"]");if(mb)mb.innerHTML=(w.isMaximized&&w.isMaximized())?restoreIcon:maxIcon;}else if(act==="close")w.close();' +
     '});' +
     'bar.addEventListener("mousedown",function(e){' +
     'if(e.button!==0)return;' +
@@ -78,7 +79,7 @@ private windowInjectionScript: string =
     'bar.addEventListener("dblclick",function(e){' +
     'var t=e.target;' +
     'if(t.closest&&t.closest(".dbx-window-controls,button,a,input,select,textarea,[contenteditable=\\"true\\"]"))return;' +
-    'var w=window.dbxNativeWindow;if(w&&w.toggleMaximize)w.toggleMaximize();' +
+    'var now=Date.now();if(now-lastMaxToggle<300)return;lastMaxToggle=now;var w=window.dbxNativeWindow;if(w&&w.toggleMaximize)w.toggleMaximize();' +
     '});' +
     '}catch(e){}' +
     '}' +
