@@ -83,10 +83,11 @@ private windowInjectionScript: string =
     '});' +
     'document.addEventListener("mouseup",function(){dragStartX=0;dragStartY=0;dragMoved=false;});' +
     'bar.addEventListener("dblclick",function(e){' +
+    'if(e.stopImmediatePropagation)e.stopImmediatePropagation();' +
     'var t=e.target;' +
     'if(t.closest&&t.closest(".dbx-window-controls,button,a,input,select,textarea,[contenteditable=\\"true\\"]"))return;' +
     'var now=Date.now();if(now-lastMaxToggle<300)return;lastMaxToggle=now;var w=window.dbxNativeWindow;if(w&&w.toggleMaximize)w.toggleMaximize();' +
-    '});' +
+    '},true);' +
     '}catch(e){}' +
     '}' +
     'if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",inject);else inject();' +
