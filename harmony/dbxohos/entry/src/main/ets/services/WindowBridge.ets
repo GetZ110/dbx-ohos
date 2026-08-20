@@ -33,7 +33,8 @@ export class WindowBridge {
         mainWindow.on('windowStatusChange', (status: window.WindowStatusType) => {
           WindowBridge.maximized = status === window.WindowStatusType.MAXIMIZE ||
             status === window.WindowStatusType.FULL_SCREEN;
-          hilog.info(DOMAIN, TAG, 'window status changed: %{public}d', status);
+          hilog.info(DOMAIN, TAG, 'window status changed: %{public}d, maximized=%{public}s', status,
+            WindowBridge.maximized ? 'true' : 'false');
         });
         WindowBridge.statusListenerBound = true;
       } catch (err) {
@@ -64,12 +65,17 @@ export class WindowBridge {
     if (!win) {
       return;
     }
+    hilog.info(DOMAIN, TAG, 'toggleMaximize called, maximized=%{public}s', WindowBridge.maximized ? 'true' : 'false');
     if (WindowBridge.maximized) {
-      win.recover().catch((err: BusinessError) => {
+      win.recover().then(() => {
+        hilog.info(DOMAIN, TAG, 'recover succeeded');
+      }).catch((err: BusinessError) => {
         hilog.warn(DOMAIN, TAG, 'restore failed: %{public}s', err.message);
       });
     } else {
-      win.maximize(window.MaximizePresentation.ENTER_IMMERSIVE_DISABLE_TITLE_AND_DOCK_HOVER).catch((err: BusinessError) => {
+      win.maximize(window.MaximizePresentation.ENTER_IMMERSIVE_DISABLE_TITLE_AND_DOCK_HOVER).then(() => {
+        hilog.info(DOMAIN, TAG, 'maximize succeeded');
+      }).catch((err: BusinessError) => {
         hilog.warn(DOMAIN, TAG, 'maximize failed: %{public}s', err.message);
       });
     }
