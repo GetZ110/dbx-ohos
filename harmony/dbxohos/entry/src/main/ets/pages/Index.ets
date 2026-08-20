@@ -2,6 +2,7 @@ import { webview } from '@kit.ArkWeb';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { AppConstants } from '../common/Constants';
 import { WebPrefsBridge } from '../services/WebPrefsBridge';
+import { ThemePrefs } from '../services/ThemePrefs';
 import { WindowBridge } from '../services/WindowBridge';
 
 const DOMAIN = 0xDB2;
@@ -28,6 +29,7 @@ struct Index {
   @State webSrc: string = AppConstants.SERVER_URL;
   @State loading: boolean = true;
   @State errorText: string = '';
+  @State darkLoading: boolean = false;
   @StorageProp('dbx_reload_token') @Watch('onReloadTokenChanged') reloadToken: number = 0;
   private controller: webview.WebviewController = new webview.WebviewController();
   private prefsBridge: WebPrefsBridge = new WebPrefsBridge();
@@ -107,7 +109,10 @@ private windowInjectionScript: string =
     '})();';
 
   aboutToAppear(): void {
-    hilog.info(DOMAIN, TAG, 'Index about to appear, webSrc=%{public}s', this.webSrc);
+    const savedTheme: string = ThemePrefs.getPref('dbx-theme');
+    this.darkLoading = savedTheme === 'dark';
+    hilog.info(DOMAIN, TAG, 'Index about to appear, webSrc=%{public}s, savedTheme=%{public}s',
+      this.webSrc, savedTheme.length > 0 ? savedTheme : '(unset)');
   }
 
   onReloadTokenChanged(): void {
@@ -178,16 +183,16 @@ private windowInjectionScript: string =
           LoadingProgress()
             .width(48)
             .height(48)
-            .color('#0A59F7')
+            .color(this.darkLoading ? '#3B82F6' : '#0A59F7')
           Text('正在启动 DBX 本地服务…')
             .fontSize(14)
-            .fontColor('#666666')
+            .fontColor(this.darkLoading ? '#c8c8cc' : '#666666')
             .margin({ top: 12 })
         }
         .width('100%')
         .height('100%')
         .justifyContent(FlexAlign.Center)
-        .backgroundColor('#F5F6F8')
+        .backgroundColor(this.darkLoading ? '#131416' : '#F5F6F8')
       }
 
       // Error overlay with retry
