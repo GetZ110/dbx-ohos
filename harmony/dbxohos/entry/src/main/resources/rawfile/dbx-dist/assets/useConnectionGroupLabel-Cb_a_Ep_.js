@@ -1,1 +1,0 @@
-import{u as e}from"./index-CV-3bKrL.js";import{n as t}from"./vue-i18n-DU_7lRsb.js";import{n}from"./connectionStore-xeGUkawo.js";function r(){let r=n(),{connectionGroupPaths:i}=e(r),{t:a}=t();function o(e){return i.value.get(e)?.join(` / `)||a(`connectionGroup.ungroupedLabel`)}return{connectionGroupPaths:i,connectionGroupLabel:o}}export{r as t};

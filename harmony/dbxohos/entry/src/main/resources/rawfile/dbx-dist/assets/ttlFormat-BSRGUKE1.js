@@ -1,1 +1,0 @@
-function e(e,t){if(e===-1||e<=0)return null;let n=Math.floor(e/86400),r=Math.floor(e%86400/3600),i=Math.floor(e%3600/60),a=e%60,o=[String(r).padStart(2,`0`),String(i).padStart(2,`0`),String(a).padStart(2,`0`)].join(`:`);return n>0?`${t(`redis.ttlDay`,{count:n})} ${o}`:o}export{e as t};
