@@ -26,6 +26,7 @@ export class WindowBridge {
     WindowBridge.mainWindow = mainWindow;
     WindowBridge.closeHandler = closeHandler;
     WindowBridge.maximized = false;
+    hilog.info(DOMAIN, TAG, 'WindowBridge initialized');
 
     if (!WindowBridge.statusListenerBound) {
       try {

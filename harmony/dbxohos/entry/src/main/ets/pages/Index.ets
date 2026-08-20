@@ -32,20 +32,25 @@ struct Index {
   private controller: webview.WebviewController = new webview.WebviewController();
   private prefsBridge: WebPrefsBridge = new WebPrefsBridge();
   private windowBridge: WindowBridge = new WindowBridge();
-  private windowInjectionScript: string =
+private windowInjectionScript: string =
     '(function(){' +
-    'var style=document.createElement("style");' +
-    'style.textContent=' +
+    'function addStyle(){' +
+    'if(!document.getElementById("dbx-win-style")&&document.head){' +
+    'var s=document.createElement("style");s.id="dbx-win-style";' +
+    's.textContent=' +
     '".dbx-window-controls{display:inline-flex;align-items:center;height:100%;margin-left:6px;user-select:none;-webkit-user-select:none;flex-shrink:0;}"+' +
     '".dbx-window-controls button{width:34px;height:28px;display:inline-flex;align-items:center;justify-content:center;border:none;background:transparent;color:currentColor;border-radius:6px;cursor:default;font-size:14px;line-height:1;padding:0;}"+' +
     '".dbx-window-controls button:hover{background:rgba(128,128,128,0.2);}"+' +
     '".dbx-window-controls button:active{background:rgba(128,128,128,0.3);}"+' +
     '".dbx-window-controls .dbx-win-close:hover{background:rgba(232,17,35,0.9);color:#fff;}";' +
-    'document.head.appendChild(style);' +
+    'document.head.appendChild(s);' +
+    '}' +
+    '}' +
     'function inject(){' +
+    'try{' +
+    'addStyle();' +
     'var bar=document.querySelector(".app-toolbar");' +
     'if(!bar||document.getElementById("dbx-window-controls"))return;' +
-    'try{' +
     'var wrap=document.createElement("div");' +
     'wrap.id="dbx-window-controls";' +
     'wrap.className="dbx-window-controls";' +
@@ -54,6 +59,7 @@ struct Index {
     '"<button data-win=\\"max\\" title=\\"最大化/还原\\">&#9633;</button>"+' +
     '"<button data-win=\\"close\\" class=\\"dbx-win-close\\" title=\\"关闭\\">&#10005;</button>";' +
     'bar.appendChild(wrap);' +
+    'if(console&&console.log)console.log("[DBX] custom window controls injected");' +
     'wrap.addEventListener("click",function(e){' +
     'var t=e.target.closest("button");if(!t)return;' +
     'var act=t.getAttribute("data-win");var w=window.dbxNativeWindow;if(!w)return;' +
@@ -72,9 +78,9 @@ struct Index {
     '});' +
     '}catch(e){}' +
     '}' +
-    'if(document.getElementById("app"))inject();else document.addEventListener("DOMContentLoaded",inject);' +
+    'if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",inject);else inject();' +
     'if(window.MutationObserver){var mo=new MutationObserver(inject);mo.observe(document.documentElement,{childList:true,subtree:true});}' +
-    '})();';
+    '})();'
   private prefsRestoreScript: string =
     '(function(){' +
     'try{' +
