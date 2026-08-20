@@ -39,7 +39,7 @@ private windowInjectionScript: string =
     'var s=document.createElement("style");s.id="dbx-win-style";' +
     's.textContent=' +
     '".dbx-window-controls{display:inline-flex;align-items:center;height:100%;margin-left:6px;user-select:none;-webkit-user-select:none;flex-shrink:0;}"+' +
-    '".dbx-window-controls button{width:34px;height:28px;display:inline-flex;align-items:center;justify-content:center;border:none;background:transparent;color:currentColor;border-radius:6px;cursor:default;font-size:14px;line-height:1;padding:0;}"+' +
+    '".dbx-window-controls button{width:46px;height:100%;display:inline-flex;align-items:center;justify-content:center;border:none;background:transparent;color:currentColor;border-radius:0;cursor:default;font-size:14px;line-height:1;padding:0;}"+' +
     '".dbx-window-controls button:hover{background:rgba(128,128,128,0.2);}"+' +
     '".dbx-window-controls button:active{background:rgba(128,128,128,0.3);}"+' +
     '".dbx-window-controls .dbx-win-close:hover{background:rgba(232,17,35,0.9);color:#fff;}";' +
@@ -54,16 +54,20 @@ private windowInjectionScript: string =
     'var wrap=document.createElement("div");' +
     'wrap.id="dbx-window-controls";' +
     'wrap.className="dbx-window-controls";' +
-    'wrap.innerHTML=' +
-    '"<button data-win=\\"min\\" title=\\"最小化\\">&#8211;</button>"+' +
-    '"<button data-win=\\"max\\" title=\\"最大化/还原\\">&#9633;</button>"+' +
-    '"<button data-win=\\"close\\" class=\\"dbx-win-close\\" title=\\"关闭\\">&#10005;</button>";' +
+    'var dbxWin=window.dbxNativeWindow||{};' +
+    'function svgIcon(inner){return \'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">\'+inner+\'</svg>\';}' +
+    'var maxIcon=svgIcon(\'<rect x="3" y="3" width="18" height="18" rx="1"/>\');' +
+    'var restoreIcon=svgIcon(\'<rect x="5" y="9" width="11" height="11" rx="1"/><path d="M8 4h9a3 3 0 0 1 3 3v9"/>\');' +
+    'var minIcon=svgIcon(\'<line x1="5" y1="12" x2="19" y2="12"/>\');' +
+    'var closeIcon=svgIcon(\'<line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/>\');' +
+    'var showMaxIcon=(dbxWin.isMaximized&&dbxWin.isMaximized())?restoreIcon:maxIcon;' +
+    'wrap.innerHTML=\'<button data-win="max" title="最大化/还原">\'+showMaxIcon+\'</button>\'+\'<button data-win="min" title="最小化">\'+minIcon+\'</button>\'+\'<button data-win="close" class="dbx-win-close" title="关闭">\'+closeIcon+\'</button>\';' +
     'bar.appendChild(wrap);' +
     'if(console&&console.log)console.log("[DBX] custom window controls injected");' +
     'wrap.addEventListener("click",function(e){' +
     'var t=e.target.closest("button");if(!t)return;' +
     'var act=t.getAttribute("data-win");var w=window.dbxNativeWindow;if(!w)return;' +
-    'if(act==="min")w.minimize();else if(act==="max")w.toggleMaximize();else if(act==="close")w.close();' +
+    'if(act==="min")w.minimize();else if(act==="max"){w.toggleMaximize();var mb=wrap.querySelector("button[data-win=\\"max\\"]");if(mb)mb.innerHTML=(w.isMaximized&&w.isMaximized())?restoreIcon:maxIcon;}else if(act==="close")w.close();' +
     '});' +
     'bar.addEventListener("mousedown",function(e){' +
     'if(e.button!==0)return;' +
