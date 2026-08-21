@@ -24,11 +24,24 @@ export default class EntryAbility extends UIAbility {
 
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     try {
-      this.context.getApplicationContext().setColorMode(ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET);
+      const context = this.context as common.UIAbilityContext;
+      ThemePrefs.init(context);
+      const savedTheme: string = ThemePrefs.getPref('dbx-theme');
+      // Make the app (and the system chrome/dock around the window) follow the
+      // saved light/dark theme instead of leaving it unset (which can show a
+      // white app bar even in dark mode).
+      let mode: number = ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET;
+      if (savedTheme === 'dark') {
+        mode = ConfigurationConstant.ColorMode.COLOR_MODE_DARK;
+      } else if (savedTheme === 'light') {
+        mode = ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT;
+      }
+      this.context.getApplicationContext().setColorMode(mode);
+      hilog.info(DOMAIN, TAG, 'Ability onCreate, colorMode=%{public}d, savedTheme=%{public}s',
+        mode, savedTheme.length > 0 ? savedTheme : '(unset)');
     } catch (err) {
       hilog.error(DOMAIN, TAG, 'Failed to set colorMode. Cause: %{public}s', JSON.stringify(err));
     }
-    hilog.info(DOMAIN, TAG, '%{public}s', 'Ability onCreate');
   }
 
   onDestroy(): void {
