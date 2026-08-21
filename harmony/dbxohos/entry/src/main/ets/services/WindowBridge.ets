@@ -73,7 +73,7 @@ export class WindowBridge {
         hilog.warn(DOMAIN, TAG, 'restore failed: %{public}s', err.message);
       });
     } else {
-      win.maximize(window.MaximizePresentation.ENTER_IMMERSIVE_DISABLE_TITLE_AND_DOCK_HOVER).then(() => {
+      win.maximize(window.MaximizePresentation.EXIT_IMMERSIVE).then(() => {
         hilog.info(DOMAIN, TAG, 'maximize succeeded');
       }).catch((err: BusinessError) => {
         hilog.warn(DOMAIN, TAG, 'maximize failed: %{public}s', err.message);
