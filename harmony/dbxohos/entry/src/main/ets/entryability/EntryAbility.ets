@@ -190,6 +190,20 @@ export default class EntryAbility extends UIAbility {
       // enabling both paths causes a double toggle (maximize plays and then
       // immediately restores).
       mainWindow.setWindowLayoutFullScreen(true);
+      // Try to make the window's system bar/dock area follow the app theme.
+      // Note: the OS taskbar/dock (outside the app window) may still follow the
+      // global system theme and be beyond per-app control.
+      const savedTheme = ThemePrefs.getPref('dbx-theme');
+      const darkChrome = savedTheme === 'dark';
+      const chromeColor = darkChrome ? '#1c1c1e' : '#ffffff';
+      mainWindow.setWindowSystemBarProperties({
+        statusBarColor: chromeColor,
+        navigationBarColor: chromeColor
+      }).then(() => {
+        hilog.info(DOMAIN, TAG, 'system bar colors applied (dark=%{public}s)', darkChrome ? 'true' : 'false');
+      }).catch((err: BusinessError) => {
+        hilog.warn(DOMAIN, TAG, 'setWindowSystemBarProperties failed: %{public}s', err.message);
+      });
       // Do not show the system title bar / dock when the mouse hits the screen
       // edge while the window is maximized/immersive.
       mainWindow.setTitleAndDockHoverShown(false, false).catch((err: BusinessError) => {
