@@ -36,7 +36,10 @@ export default class EntryAbility extends UIAbility {
       } else if (savedTheme === 'light') {
         mode = ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT;
       }
-      this.context.getApplicationContext().setColorMode(mode);
+      // Set on the UIAbilityContext (and the application context) so the system
+      // chrome/dock can follow the app theme like other apps do when foreground.
+      context.setColorMode(mode);
+      context.getApplicationContext().setColorMode(mode);
       hilog.info(DOMAIN, TAG, 'Ability onCreate, colorMode=%{public}d, savedTheme=%{public}s',
         mode, savedTheme.length > 0 ? savedTheme : '(unset)');
     } catch (err) {
