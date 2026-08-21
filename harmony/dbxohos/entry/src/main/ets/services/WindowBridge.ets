@@ -1,6 +1,7 @@
 import { window } from '@kit.ArkUI';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { BusinessError } from '@kit.BasicServicesKit';
+import { ThemePrefs } from './ThemePrefs';
 
 const DOMAIN = 0xDB8;
 const TAG = 'DBX_WINDOW';
@@ -35,6 +36,9 @@ export class WindowBridge {
             status === window.WindowStatusType.FULL_SCREEN;
           hilog.info(DOMAIN, TAG, 'window status changed: %{public}d, maximized=%{public}s', status,
             WindowBridge.maximized ? 'true' : 'false');
+          if (WindowBridge.maximized) {
+            WindowBridge.applySystemBarColor(mainWindow);
+          }
         });
         WindowBridge.statusListenerBound = true;
       } catch (err) {
@@ -42,6 +46,29 @@ export class WindowBridge {
         hilog.warn(DOMAIN, TAG, 'windowStatusChange listener registration failed: %{public}s', e.message);
       }
     }
+  }
+
+  /**
+   * Color the window's status/navigation bar area to match the saved theme.
+   * Called when the window enters maximized/full-screen so the system Dock area
+   * can follow the app theme like other apps.
+   */
+  private static applySystemBarColor(win: window.Window): void {
+    const dark: boolean = ThemePrefs.getPref('dbx-theme') === 'dark';
+    const barColor = dark ? '#1c1c1e' : '#ffffff';
+    const contentColor = dark ? '#ffffff' : '#000000';
+    win.setWindowSystemBarProperties({
+      statusBarColor: barColor,
+      navigationBarColor: barColor,
+      statusBarContentColor: contentColor,
+      navigationBarContentColor: contentColor,
+      isStatusBarLightIcon: dark,
+      isNavigationBarLightIcon: dark
+    }).then(() => {
+      hilog.info(DOMAIN, TAG, 'system bar color applied (dark=%{public}s)', dark ? 'true' : 'false');
+    }).catch((err: BusinessError) => {
+      hilog.warn(DOMAIN, TAG, 'setWindowSystemBarProperties failed: %{public}s', err.message);
+    });
   }
 
   /**
