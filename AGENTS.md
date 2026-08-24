@@ -56,15 +56,31 @@ cp target/release/libdbx_ohos.so \
 
 注意：完整 release 构建很慢（LTO + codegen-units=1，约 13–26 分钟）。
 
-### HAP
+### HAP（推荐：devecocli 一键）
 
-- 用 DevEco Studio 打开 `harmony/dbxohos` 构建运行。
-- 命令行（如可用）：
+- 推荐方式（已在本机验证）：
   ```bash
-  /data/app/node.org/node_22.7.0/bin/node \
-    /data/app/hvigor.org/hvigor_1.0.0/bin/hvigorw.js \
-    assembleHap --mode module -p product=default
+  export DEVECO_CLI_CLT_PATH=/storage/Users/currentUser/deveco_tools
+  export DEVECO_SDK_HOME=/storage/Users/currentUser/deveco_tools/sdk
+  cd harmony/dbxohos
+  devecocli run --device 127.0.0.1:43817   # 构建+装机+启动
+  devecocli run --skip-build --device 127.0.0.1:43817  # 只部署
   ```
+  `devecocli` 是全局 npm 包 `@deveco-test/hmos-deveco-code`（bin: `~/.npm-global/bin/devecocli`）。根目录 `dev-run.sh` 已封装上述环境变量，可 `./dev-run.sh [--skip-build]`。
+- 裸 hvigor 构建（同样可用，需先做下方环境修复）：
+  ```bash
+  export DEVECO_SDK_HOME=/storage/Users/currentUser/deveco_tools/sdk
+  cd harmony/dbxohos
+  node /storage/Users/currentUser/deveco_tools/hvigor/bin/hvigorw.js \
+    --mode module -p product=default --no-daemon assembleHap
+  # 产物：entry/build/default/outputs/default/entry-default-signed.hap
+  ```
+- 命令行环境修复（本机已做，勿删）：
+  - SDK 工具链缺 `x` 位：`chmod +x` 过 `toolchains/{hdc,restool,ark_disasm,syscap_tool,...}`、`toolchains/lib/{ohos_packing_tool,hap-sign-tool,binary-sign-tool}`、`ets/.../ark/build/bin/{es2abc,panda_guard}`
+  - `node_modules/@ohos/hvigor-ohos-plugin` → symlink 到 `deveco_tools/hvigor/hvigor-ohos-plugin`
+  - plugin 的 `node_modules/@ohos/hvigor` → symlink 到 `deveco_tools/hvigor/hvigor`；hvigor 自身 `node_modules/@ohos/hvigor` → 自链接（worker 解析需要）
+  - `deveco_tools/tool/node` → symlink 到 `deveco_tools/node`（CLT 布局需要）
+- 已知小问题：`devecocli check lint` 流程能跑但报告为空（codelinter 与 SDK 26/OHOS 7.0 Beta 兼容问题），当前以 hvigor `CompileArkTS` 编译无错为准。
 
 ## 已完成
 
@@ -75,6 +91,7 @@ cp target/release/libdbx_ohos.so \
 - 前后台恢复只 reload，不重复 `loadContent`
 - 主题/外观偏好原生 Preferences 持久化
 - MCP 复用 `AppState`，避免二次打开 SQLite
+- 底部导航区避让：`WindowBridge` 用 `getWindowAvoidArea(TYPE_NAVIGATION_INDICATOR)` + `on('avoidAreaChange')` 维护高度，`Index.ets` 注入 `windowSafeAreaScript` 每 500ms 读取 `getBottomNavHeight()` 并给 `<body>` 加 padding-bottom（2in1 上该值为 0，无副作用）
 - 仓库已按 submodule 结构托管到 GitHub
 
 ## 下一步任务

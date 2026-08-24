@@ -17,3 +17,7 @@ tmp/
 .env
 .env.local
 local.properties
+
+# HarmonyOS build artifacts & dependencies
+node_modules/
+release/
