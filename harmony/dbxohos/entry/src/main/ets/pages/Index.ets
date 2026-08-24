@@ -116,6 +116,62 @@ private windowInjectionScript: string =
     'apply();' +
     'setInterval(apply,500);' +
     '})();'
+  // Header scroll-sync fix (DOM render mode): dbx renders the header as a
+  // sibling container and syncs it via JS (headerRef.scrollLeft = ...) on every
+  // scroll event, which lags the compositor-scrolled rows by a frame or two and
+  // janks under fast trackpad input. CSS scroll-driven animations are
+  // advertised by ArkWeb's Chromium 144 but their named-timeline implementation
+  // does not actually drive animations in this build, so instead THIS script
+  // moves the header shell INSIDE the data scroller as a sticky element: header
+  // and rows now live in one native scroll container, so Chromium scrolls them
+  // in lockstep on the compositor (both axes), sticky-left pinned columns keep
+  // working, and dbx's old scrollLeft writes become no-ops (overflow visible).
+  // Canvas render mode (self-drawn grid) is left untouched.
+  private gridHeaderInScrollerScript: string =
+    '(function(){' +
+    'function moveOne(root){' +
+    'try{' +
+    'var sc=root.querySelector(".data-grid-scroller");' +
+    'if(!sc||sc.classList.contains("canvas-grid-scroller"))return;' +
+    'var shell=root.querySelector(".data-grid-header-shell");' +
+    'if(!shell||shell.classList.contains("data-grid-transpose-header"))return;' +
+    'if(sc.contains(shell)){syncStyle(shell);return;}' +
+    'var row=shell.querySelector(".data-grid-header-row");' +
+    'var bg=row&&row.firstElementChild?getComputedStyle(row.firstElementChild).backgroundColor:null;' +
+    'if(bg&&bg!=="rgba(0, 0, 0, 0)")shell.style.background=bg;' +
+    'shell.style.position="sticky";' +
+    'shell.style.top="0";' +
+    'shell.style.zIndex="30";' +
+    'shell.style.width="max-content";' +
+    'shell.style.overflow="visible";' +
+    'shell.style.boxShadow="0 1px 0 rgba(128,128,128,0.18)";' +
+    'sc.insertBefore(shell,sc.firstChild);' +
+    '}catch(e){}' +
+    '}' +
+    'function syncStyle(shell){' +
+    'try{' +
+    'if(shell.style.position!=="sticky")shell.style.position="sticky";' +
+    'if(shell.style.top!=="0")shell.style.top="0";' +
+    'if(shell.style.zIndex!=="30")shell.style.zIndex="30";' +
+    'if(shell.style.width!=="max-content")shell.style.width="max-content";' +
+    'if(shell.style.overflow!=="visible")shell.style.overflow="visible";' +
+    '}catch(e){}' +
+    '}' +
+    'function applyAll(){' +
+    'var roots=document.querySelectorAll("[data-grid-root]");' +
+    'for(var i=0;i<roots.length;i++)moveOne(roots[i]);' +
+    '}' +
+    'function boot(){' +
+    'applyAll();' +
+    'try{' +
+    'if(window.MutationObserver){' +
+    'var mo=new MutationObserver(function(){clearTimeout(mo.t);mo.t=setTimeout(function(){applyAll();},250);});' +
+    'mo.observe(document.documentElement,{childList:true,subtree:true});' +
+    '}' +
+    '}catch(e){}' +
+    '}' +
+    'if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",boot);else boot();' +
+    '})();'
   private prefsRestoreScript: string =
     '(function(){' +
     'try{' +
@@ -133,9 +189,33 @@ private windowInjectionScript: string =
     'try{if(k&&k.indexOf("dbx-")===0&&b.savePref)b.savePref(String(k),String(v));}catch(e){}' +
     '};' +
     '}catch(e){}' +
+    '})();'
+  // DOM-mode grid trackpad fix: dbx DataGrid's onDomGridWheel hijacks every wheel
+  // event (preventDefault + manual scrollTop assignment), which kills native
+  // browser momentum/inertia and makes trackpad scrolling janky. This capture
+  // listener stops that handler on DOM-mode scrollers (data-grid-scroller
+  // WITHOUT the canvas-grid-scroller class) while leaving native scrolling to
+  // the compositor. Canvas render mode is untouched.
+  private gridWheelNativeScrollScript: string =
+    '(function(){' +
+    'function patch(){' +
+    'try{' +
+    'document.addEventListener("wheel",function(e){' +
+    'var el=e.target&&e.target.closest?e.target.closest(".data-grid-scroller"):null;' +
+    'if(!el)return;' +
+    'if(el.classList.contains("canvas-grid-scroller"))return;' +
+    'e.stopImmediatePropagation();' +
+    '},true);' +
+    'if(window.console&&console.log)console.log("[DBX] DOM grid wheel -> native scroll");' +
+    '}catch(e){}' +
+    '}' +
+    'if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",patch);else patch();' +
     '})();';
 
   aboutToAppear(): void {
+    // Diagnostic: expose ArkWeb DevTools (CDP) for in-page profiling.
+    // TODO: remove or gate behind a debug flag before release.
+    webview.WebviewController.setWebDebuggingAccess(true);
     const savedTheme: string = ThemePrefs.getPref('dbx-theme');
     this.darkLoading = savedTheme === 'dark';
     hilog.info(DOMAIN, TAG, 'Index about to appear, webSrc=%{public}s, savedTheme=%{public}s',
@@ -179,6 +259,12 @@ private windowInjectionScript: string =
         }, {
           script: this.windowSafeAreaScript,
           scriptRules: ['*']
+        }, {
+          script: this.gridWheelNativeScrollScript,
+          scriptRules: ['*']
+        }, {
+          script: this.gridHeaderInScrollerScript,
+          scriptRules: ['*']
         }])
         .onlineImageAccess(true)
         .fileAccess(true)
@@ -190,6 +276,19 @@ private windowInjectionScript: string =
         .onPageEnd(() => {
           this.loading = false;
           this.errorText = '';
+          const hsync0: string = ThemePrefs.getPref('dbx-diag-hsync');
+          hilog.info(DOMAIN, TAG, 'hsync-probe-0=%{public}s', hsync0.length > 0 ? hsync0 : '(empty)');
+          this.controller.runJavaScript(
+            "document.documentElement.getAttribute('data-dbx-header-sync')||'noattr'")
+            .then((v: string) => {
+              hilog.info(DOMAIN, TAG, 'hsync-dom=%{public}s', v);
+            }).catch((e: Error) => {
+              hilog.warn(DOMAIN, TAG, 'hsync-dom-error=%{public}s', e.message);
+            });
+          setTimeout(() => {
+            const hsync1: string = ThemePrefs.getPref('dbx-diag-hsync');
+            hilog.info(DOMAIN, TAG, 'hsync-probe-1=%{public}s', hsync1.length > 0 ? hsync1 : '(empty)');
+          }, 4000);
         })
         .onErrorReceive((event: WebErrorReceiveEvent) => {
           if (!event.request.isMainFrame()) {
