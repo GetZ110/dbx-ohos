@@ -19,6 +19,9 @@ export class WindowBridge {
   private static closeHandler: (() => void) | null = null;
   private static maximized: boolean = false;
   private static statusListenerBound: boolean = false;
+  private static avoidListenerBound: boolean = false;
+  // Bottom navigation/side three-button avoid area height in px (0 when absent).
+  private static bottomNavHeight: number = 0;
 
   /**
    * Called from EntryAbility once the main window is available.
@@ -27,6 +30,8 @@ export class WindowBridge {
     WindowBridge.mainWindow = mainWindow;
     WindowBridge.closeHandler = closeHandler;
     WindowBridge.maximized = false;
+    WindowBridge.refreshBottomNavHeight(mainWindow);
+    WindowBridge.registerAvoidListener(mainWindow);
     hilog.info(DOMAIN, TAG, 'WindowBridge initialized');
 
     if (!WindowBridge.statusListenerBound) {
@@ -45,6 +50,50 @@ export class WindowBridge {
         const e = err as BusinessError;
         hilog.warn(DOMAIN, TAG, 'windowStatusChange listener registration failed: %{public}s', e.message);
       }
+    }
+  }
+
+  /**
+   * Read the bottom navigation/three-button avoid area height (px) so the web
+   * UI can pad its bottom edge and keep interactive controls clear of the
+   * system navigation area. Falls back to keeping the previous value.
+   */
+  private static refreshBottomNavHeight(win: window.Window): void {
+    try {
+      const area = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_NAVIGATION_INDICATOR);
+      const h = area !== null && area !== undefined ? area.bottomRect.height : 0;
+      if (WindowBridge.bottomNavHeight !== h) {
+        WindowBridge.bottomNavHeight = h;
+        hilog.info(DOMAIN, TAG, 'bottom nav avoid height updated: %{public}d px', h);
+      }
+    } catch (err) {
+      const e = err as BusinessError;
+      hilog.warn(DOMAIN, TAG, 'getWindowAvoidArea failed: %{public}s', e.message);
+    }
+  }
+
+  /**
+   * Keep the stored avoid height in sync when the system navigation area
+   * changes (window mode/rotation/fold switches, system bar toggles, etc.).
+   */
+  private static registerAvoidListener(win: window.Window): void {
+    if (WindowBridge.avoidListenerBound) {
+      return;
+    }
+    try {
+      win.on('avoidAreaChange', (option) => {
+        if (option.type === window.AvoidAreaType.TYPE_NAVIGATION_INDICATOR) {
+          const h = option.area !== null && option.area !== undefined ? option.area.bottomRect.height : 0;
+          if (WindowBridge.bottomNavHeight !== h) {
+            WindowBridge.bottomNavHeight = h;
+            hilog.info(DOMAIN, TAG, 'bottom nav avoid height changed: %{public}d px', h);
+          }
+        }
+      });
+      WindowBridge.avoidListenerBound = true;
+    } catch (err) {
+      const e = err as BusinessError;
+      hilog.warn(DOMAIN, TAG, 'avoidAreaChange listener registration failed: %{public}s', e.message);
     }
   }
 
@@ -137,5 +186,14 @@ export class WindowBridge {
    */
   isMaximized(): boolean {
     return WindowBridge.maximized;
+  }
+
+  /**
+   * Bottom navigation/three-button avoid area height in px, exposed to the
+   * Web page via the `dbxNativeWindow` JS bridge. The injected script pads the
+   * page bottom so content is not overlapped by the system navigation area.
+   */
+  getBottomNavHeight(): number {
+    return WindowBridge.bottomNavHeight;
   }
 }

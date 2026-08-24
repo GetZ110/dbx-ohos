@@ -89,6 +89,33 @@ private windowInjectionScript: string =
     'if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",inject);else inject();' +
     'if(window.MutationObserver){var mo=new MutationObserver(inject);mo.observe(document.documentElement,{childList:true,subtree:true});}' +
     '})();'
+  // Injects bottom safe-area padding so interactive web content is not covered
+  // by the system navigation/three-button area. Reads the avoid height from the
+  // native bridge and re-applies it periodically (avoidAreaChange has no JS
+  // callback, so a lightweight poll keeps the padding in sync).
+  private windowSafeAreaScript: string =
+    '(function(){' +
+    'function ensureStyle(){' +
+    'if(document.getElementById("dbx-safe-style")||!document.head)return;' +
+    'var s=document.createElement("style");s.id="dbx-safe-style";' +
+    's.textContent="html,body{--dbx-safe-bottom:0px;}";' +
+    'document.head.appendChild(s);' +
+    '}' +
+    'function apply(){' +
+    'try{' +
+    'ensureStyle();' +
+    'var w=window.dbxNativeWindow;' +
+    'var h=(w&&w.getBottomNavHeight)?(w.getBottomNavHeight()||0):0;' +
+    'var px=Math.ceil(h)+"px";' +
+    'var root=document.documentElement;' +
+    'if(root){root.style.setProperty("--dbx-safe-bottom",px);}' +
+    'if(document.body){document.body.style.paddingBottom=px;}' +
+    '}catch(e){}' +
+    '}' +
+    'if(document.readyState==="loading"){document.addEventListener("DOMContentLoaded",apply);}else{apply();}' +
+    'apply();' +
+    'setInterval(apply,500);' +
+    '})();'
   private prefsRestoreScript: string =
     '(function(){' +
     'try{' +
@@ -140,7 +167,7 @@ private windowInjectionScript: string =
         .javaScriptProxy({
           object: this.windowBridge,
           name: 'dbxNativeWindow',
-          methodList: ['minimize', 'toggleMaximize', 'close', 'startMove', 'isMaximized'],
+          methodList: ['minimize', 'toggleMaximize', 'close', 'startMove', 'isMaximized', 'getBottomNavHeight'],
           controller: this.controller
         })
         .javaScriptOnDocumentStart([{
@@ -148,6 +175,9 @@ private windowInjectionScript: string =
           scriptRules: ['*']
         }, {
           script: this.windowInjectionScript,
+          scriptRules: ['*']
+        }, {
+          script: this.windowSafeAreaScript,
           scriptRules: ['*']
         }])
         .onlineImageAccess(true)
