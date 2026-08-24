@@ -101,6 +101,7 @@ cp target/release/libdbx_ohos.so \
   - 原生标题栏 / 侧边栏
   - 按窗口类型（tablet / 2in1）做布局
   - 启动加载页跟随已保存的明暗主题
+- P2：查询表格 **Canvas 渲染模式流畅度优化**（上游 `DataGrid.vue` canvas 模式每帧全量重绘导致 ArkWeb 上大数据量滚动丢帧；计划改为行块纹理缓存 + 增量绘制 + DPR 降级。落地前靠「视图选项 → 渲染模式切 DOM」兜底，该提示已写入 v1.1.0 release notes）
 - 待研究：系统全局任务栏/Dock 颜色无法由应用侧控制（已试 setColorMode / setWindowSystemBarProperties，最大化后 Dock 仍为系统色，记录待后续处理）
 - P3：沙箱数据备份/导出/导入、连接加密确认、云同步验证
 - P4：DevEco 签名配置、签名 HAP/APP 发布
