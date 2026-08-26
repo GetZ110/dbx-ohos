@@ -93,6 +93,7 @@ cp target/release/libdbx_ohos.so \
 - MCP 复用 `AppState`，避免二次打开 SQLite
 - 底部导航区避让：`WindowBridge` 用 `getWindowAvoidArea(TYPE_NAVIGATION_INDICATOR)` + `on('avoidAreaChange')` 维护高度，`Index.ets` 注入 `windowSafeAreaScript` 每 500ms 读取 `getBottomNavHeight()` 并给 `<body>` 加 padding-bottom（2in1 上该值为 0，无副作用）
 - 仓库已按 submodule 结构托管到 GitHub
+- 同步上游 v0.5.96（136 commits，冲突 1 处 + lib.rs 回填 25 条上游路由）
 
 ## 下一步任务
 
@@ -123,6 +124,49 @@ cp target/release/libdbx_ohos.so \
 - **主题持久化**：ArkWeb localStorage 跨完全退出可能不落盘；当前方案是 JS 注入把 `dbx-*` 写入原生 Preferences，启动前再恢复进 localStorage。
 - **健康检查**：原生 `dbx-web` 必须有 `/api/health`；否则 `ServerHealthChecker` 会空等 10 秒。
 - **MCP 启动**：不要用 `LocalBackend::open()` 再开一次 SQLite，应复用已打开的 `AppState`。
+
+## 同步上游（t8y2/dbx main → harmonyos-port）
+
+```bash
+# 1. 拉取
+git -C upstream/dbx fetch origin --prune
+git -C upstream/dbx fetch upstream main --no-tags --prune
+
+# 2. 合并（保持既有 merge 模式，勿 rebase；信息格式见历史）
+git -C upstream/dbx merge --no-ff --no-edit upstream/main \
+  -m "merge: sync upstream/main (vX.Y.Z+) into harmonyos-port"
+
+# 3. 解冲突（原则：上游进展 + 保留 OHOS 定制，见下方「同步特有坑」）
+
+# 4. 验证编译（OHOS NDK 环境）
+cd upstream/dbx
+OHOS_NDK_HOME=/storage/Users/currentUser/.harmonybrew/Cellar/ohos-sdk/26.0.0.18_1/native \
+  cargo check -p dbx-ohos    # 只编译 lib 目标，很快；不覆盖 bin 目标
+
+# 5. 回填 lib.rs 缺失路由（必须，见坑①）；对新增 .route() 逐个确认 handler 在 routes/ 中存在
+
+# 6. 提交（husky pre-commit 依赖 pnpm，本机无 pnpm → 必须 --no-verify）
+git -C upstream/dbx add -A
+git -C upstream/dbx commit --no-verify -m "merge: sync upstream/main ..."
+
+# 7. 推送：submodule → 父仓库指针 → 父仓库
+git -C upstream/dbx push origin harmonyos-port
+cd ../.. && git add upstream/dbx && git commit -m "chore: bump upstream/dbx ..."
+git push origin main
+
+# 8. 可选：重新构建并部署 HAP（见「构建命令」）
+```
+
+### 同步特有坑
+
+- **① 双路由表（每次同步必查）**：上游只在 `crates/dbx-web/src/main.rs`（桌面入口）加新路由；OHOS 实际入口是 `crates/dbx-web/src/lib.rs`（NAPI 调 `dbx_web::run_server_with_shutdown`）。合并后必须对比并回填，否则 OHOS 端缺新 API（v0.5.96 漏了 25 条）：
+  ```bash
+  comm -23 <(grep -oE '"/[a-z0-9/_-]+"' crates/dbx-web/src/main.rs | sort -u) \
+           <(grep -oE '"/[a-z0-9/_-]+"' crates/dbx-web/src/lib.rs | sort -u)
+  ```
+  反向对比（lib.rs 独有）应只剩 harmony 特有路由：`/mq/*`、`/health`、`/mcp`、`/api/query/extract-data-grid-selection`——这些**不要删**。
+- **② `dbx-core/Cargo.toml` 大概率冲突**：保留 OHOS 定制（`rusqlite` 带 `bundled`、`mysql_async` 用 `default-rustls-ring`、`rustls`/`russh` 用 `ring`）；上游新增依赖要保留（如 `libsqlite3-hotbundle` 及其 `sqlite-multiple-ciphers` feature），它们是桌面端 `src-tauri` 用的，删了会让桌面 feature 悬空。
+- **③ 版本号**：上游 `src-tauri` / `dbx-web` / `dbx-mcp` 版本号随之上移（如 0.5.93→0.5.96），确认 `Cargo.lock` 与 `Cargo.toml` 一致（`cargo metadata` 可快速验证解析）。
 
 ## 验证方式
 
