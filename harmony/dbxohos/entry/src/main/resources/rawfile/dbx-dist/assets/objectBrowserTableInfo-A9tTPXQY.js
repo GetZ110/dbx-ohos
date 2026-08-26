@@ -1,0 +1,1 @@
+function e(e){return e??`—`}function t(e,t){let n=t.trim().toLocaleLowerCase();return n?e.filter(e=>[e.name,e.data_type,e.comment].some(e=>typeof e==`string`&&e.toLocaleLowerCase().includes(n))):e}export{e as n,t};
