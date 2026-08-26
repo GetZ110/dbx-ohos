@@ -94,6 +94,7 @@ cp target/release/libdbx_ohos.so \
 - 底部导航区避让：`WindowBridge` 用 `getWindowAvoidArea(TYPE_NAVIGATION_INDICATOR)` + `on('avoidAreaChange')` 维护高度，`Index.ets` 注入 `windowSafeAreaScript` 每 500ms 读取 `getBottomNavHeight()` 并给 `<body>` 加 padding-bottom（2in1 上该值为 0，无副作用）
 - 仓库已按 submodule 结构托管到 GitHub
 - 同步上游 v0.5.96（136 commits，冲突 1 处 + lib.rs 回填 25 条上游路由）
+- HAP 产物重建流程落地：前端 dist 走 fork CI（GetZ110/dbx Actions 从合并后源码构建，勿用 Release 包——其落后 main 几十个提交）、Rust `.so` 本地 OHOS release 构建，已写入「同步上游」章节
 
 ## 下一步任务
 
@@ -154,8 +155,59 @@ git -C upstream/dbx push origin harmonyos-port
 cd ../.. && git add upstream/dbx && git commit -m "chore: bump upstream/dbx ..."
 git push origin main
 
-# 8. 可选：重新构建并部署 HAP（见「构建命令」）
+# 8. 重建 HAP 嵌入产物（前端 dist + Rust .so），见下方「HAP 产物重建」
 ```
+
+### HAP 产物重建（同步后必须做，否则 HAP 仍是旧版）
+
+HAP 嵌两个构建产物（都被 git 跟踪）：`rawfile/dbx-dist/`（前端，669 文件/22MB）与 `entry/libs/arm64-v8a/libdbx_ohos.so`（后端，43MB）。两者都必须从**合并后的源码**重建，缺一不可：
+
+**① 前端 dist —— 不能本地构建，必须走 fork CI**
+
+- 本机是 OpenHarmony 环境（`node` 为 OHOS 版，`process.platform = openharmony`）：沙箱禁止 `dlopen` `.node`（`Permission denied`）与 WASM/WASI 加载（`UVWASI_EACCES`），且无 pnpm → 本地 vite/rolldown 构建硬性不可行。
+- **不要解包上游 Release 包**（`DBX_<ver>_arm64-browser-static.tar.gz`）：它的 dist 落后于 `upstream/main` HEAD（v0.5.96 Release tag 比 main 落后 52 个提交），直接拷贝会让 HAP 前端与源码脱节。
+- 正确做法：在 **fork 仓库（GetZ110/dbx）的 GitHub Actions** 上从合并后的 `harmonyos-port` 构建，取回产物：
+
+```bash
+# a) 建临时分支 + 极简 workflow（Node 22 + pnpm/action-setup + pnpm install --frozen-lockfile + pnpm build + upload-artifact dist/），
+#    触发方式用 push（workflow_dispatch 要求 workflow 在默认分支，临时分支上不可用）
+git -C upstream/dbx checkout -b ci/build-web-dist
+#   写 .github/workflows/build-web-dist.yml：on: push: branches: [ci/build-web-dist]
+git -C upstream/dbx add .github/workflows/build-web-dist.yml
+git -C upstream/dbx commit --no-verify -m "ci: temp workflow to build web dist"
+git -C upstream/dbx push origin ci/build-web-dist
+
+# b) 等 run 完成后取 artifact（gh run download 可能静默失败，改用 gh api 直拉 zip）
+RUN_ID=$(gh run list --repo GetZ110/dbx --workflow build-web-dist.yml --limit 1 --json databaseId --jq '.[0].databaseId')
+AID=$(gh api "repos/GetZ110/dbx/actions/runs/$RUN_ID/artifacts" --jq '.artifacts[0].id')
+TOK=$(gh auth token)
+gh api -H "Authorization: Bearer $TOK" -H "Accept: application/vnd.github+json" \
+  "repos/GetZ110/dbx/actions/artifacts/$AID/zip" > dist.zip   # 注意：给足超时，5MB 左右
+
+# c) 解包替换；替换前顶层文件结构应与旧 dist 一致（assets/ index.html fonts/ icons/ 等）
+unzip -q dist.zip -d web-dist
+DEST=harmony/dbxohos/entry/src/main/resources/rawfile/dbx-dist
+rm -rf $DEST && mkdir -p $DEST && cp -r web-dist/. $DEST/
+
+# d) 删临时分支回收（本地 + 远程），删除时 workflow 一并消失
+git -C upstream/dbx push origin --delete ci/build-web-dist
+git -C upstream/dbx branch -D ci/build-web-dist
+```
+
+**② Rust `.so` —— 本地 release 构建（约 13–31 分钟）**
+
+```bash
+cd upstream/dbx
+OHOS_NDK_HOME=/storage/Users/currentUser/.harmonybrew/Cellar/ohos-sdk/26.0.0.18_1/native \
+  cargo build --release -p dbx-ohos
+cp target/release/libdbx_ohos.so ../../harmony/dbxohos/entry/libs/arm64-v8a/libdbx_ohos.so
+```
+
+**③ 验证与提交**
+
+- 替换后确认 dist 顶层结构与旧版一致（`index.html` 引用的 `assets/index-*.js` 哈希应变，如 `index-D6HJCmZ4` → 新哈希），变更应全部落在 dbx-dist 与 .so 内
+- 父仓库提交：`git commit -m "build(hap): rebuild embedded artifacts from synced v0.5.96 source"` 并推送
+- 注意：dist 整体替换 = 大量「删旧文件 + 加新文件」的 diff（hash 命名），这是正常的
 
 ### 同步特有坑
 
