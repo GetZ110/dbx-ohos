@@ -125,6 +125,7 @@ cp target/release/libdbx_ohos.so \
 - **主题持久化**：ArkWeb localStorage 跨完全退出可能不落盘；当前方案是 JS 注入把 `dbx-*` 写入原生 Preferences，启动前再恢复进 localStorage。
 - **健康检查**：原生 `dbx-web` 必须有 `/api/health`；否则 `ServerHealthChecker` 会空等 10 秒。
 - **MCP 启动**：不要用 `LocalBackend::open()` 再开一次 SQLite，应复用已打开的 `AppState`。
+- **发版约定（release 只挂未签名包）**：签名 HAP 含 debug profile（绑定设备 UDID），不可公开发布；每次发 release 前，先把 `AppScope/app.json5` 的 `versionName`/`versionCode` 升到与 release 版本一致（当前基线：1.1.0 ↔ 1001000），再构建并替换 release 资产，保证未签名 hap 的包内版本与 release tag 对齐（本次 2026-08-27 已按此流程替换 v1.1.0 资产）。
 
 ## 同步上游（t8y2/dbx main → harmonyos-port）
 
