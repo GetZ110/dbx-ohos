@@ -1,0 +1,1 @@
+function e(e){let t=e.constraint_type.trim().toUpperCase();return t===`FOREIGN KEY`||t===`F`}function t(t,n){return n?t.filter(t=>!e(t)):t}export{t};
