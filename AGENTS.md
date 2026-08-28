@@ -93,7 +93,7 @@ cp target/release/libdbx_ohos.so \
 - MCP 复用 `AppState`，避免二次打开 SQLite
 - 底部导航区避让：`WindowBridge` 用 `getWindowAvoidArea(TYPE_NAVIGATION_INDICATOR)` + `on('avoidAreaChange')` 维护高度，`Index.ets` 注入 `windowSafeAreaScript` 每 500ms 读取 `getBottomNavHeight()` 并给 `<body>` 加 padding-bottom（2in1 上该值为 0，无副作用）
 - 仓库已按 submodule 结构托管到 GitHub
-- 同步上游 v0.5.96（136 commits，冲突 1 处 + lib.rs 回填 25 条上游路由）
+- 同步上游 v0.5.98（95 commits，冲突 1 处 + lib.rs 回填 5 条上游路由）
 - HAP 产物重建流程落地：前端 dist 走 fork CI（GetZ110/dbx Actions 从合并后源码构建，勿用 Release 包——其落后 main 几十个提交）、Rust `.so` 本地 OHOS release 构建，已写入「同步上游」章节
 
 ## 下一步任务
@@ -207,7 +207,7 @@ cp target/release/libdbx_ohos.so ../../harmony/dbxohos/entry/libs/arm64-v8a/libd
 **③ 验证与提交**
 
 - 替换后确认 dist 顶层结构与旧版一致（`index.html` 引用的 `assets/index-*.js` 哈希应变，如 `index-D6HJCmZ4` → 新哈希），变更应全部落在 dbx-dist 与 .so 内
-- 父仓库提交：`git commit -m "build(hap): rebuild embedded artifacts from synced v0.5.96 source"` 并推送
+- 父仓库提交：`git commit -m "build(hap): rebuild embedded artifacts from synced v0.5.98 source"` 并推送
 - 注意：dist 整体替换 = 大量「删旧文件 + 加新文件」的 diff（hash 命名），这是正常的
 
 ### 同步特有坑
