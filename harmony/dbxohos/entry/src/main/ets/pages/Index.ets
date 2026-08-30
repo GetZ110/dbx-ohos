@@ -30,7 +30,6 @@ struct Index {
   @State loading: boolean = true;
   @State errorText: string = '';
   @State darkLoading: boolean = false;
-  @StorageProp('dbx_dark_mode') @Watch('onDarkModeChanged') darkMode: boolean = false;
   @StorageProp('dbx_reload_token') @Watch('onReloadTokenChanged') reloadToken: number = 0;
   private controller: webview.WebviewController = new webview.WebviewController();
   private prefsBridge: WebPrefsBridge = new WebPrefsBridge();
@@ -43,6 +42,8 @@ private windowInjectionScript: string =
     'if(!document.getElementById("dbx-win-style")&&document.head){' +
     'var s=document.createElement("style");s.id="dbx-win-style";' +
     's.textContent=' +
+    '".app-toolbar{padding-right:144px!important;}"+' +
+    '".app-toolbar > div:last-child{margin-right:160px!important;}"' +
     '".dbx-window-controls{display:inline-flex;align-items:center;height:100%;margin-left:2px;user-select:none;-webkit-user-select:none;flex-shrink:0;}"+' +
     '".dbx-window-controls button{width:32px;height:32px;display:inline-flex;align-items:center;justify-content:center;border:none;background:transparent;color:currentColor;border-radius:6px;cursor:default;font-size:14px;line-height:1;padding:0;margin:0 1px;}"+' +
     '".dbx-window-controls button:hover{background:rgba(128,128,128,0.15);}"+' +
@@ -56,9 +57,31 @@ private windowInjectionScript: string =
     'try{' +
     'addStyle();' +
     'var bar=document.querySelector(".app-toolbar");' +
-    'if(!bar)return;' +
+    'if(!bar||document.getElementById("dbx-window-controls"))return;' +
+    'var harmonyDesktop=!!(window.__HARMONY_DESKTOP__||window.__TAURI_INTERNALS__);' +
+    'if(!document.getElementById("dbx-window-controls")&&!harmonyDesktop){' +
+    'var wrap=document.createElement("div");' +
+    'wrap.id="dbx-window-controls";' +
+    'wrap.className="dbx-window-controls";' +
+    'var dbxWin=window.dbxNativeWindow||{};' +
+    'function svgIcon(inner){return \'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">\'+inner+\'</svg>\';}' +
+    'var maxIcon=svgIcon(\'<rect x="3" y="3" width="18" height="18" rx="1"/>\');' +
+    'var restoreIcon=svgIcon(\'<rect width="14" height="14" x="8" y="8" rx="1" ry="1"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>\');' +
+    'var minIcon=svgIcon(\'<line x1="5" y1="12" x2="19" y2="12"/>\');' +
+    'var closeIcon=svgIcon(\'<path d="M18 6 6 18"/><path d="m6 6 12 12"/>\');' +
+    'var lastMaxToggle=0;' +
     'var dragStartX=0,dragStartY=0,dragMoved=false;' +
-    'function isDragTarget(t){if(!t||!t.closest)return false;return !t.closest(".dbx-window-controls,button,a,input,select,textarea,[contenteditable=\\\"true\\\"],[role=\\\"button\\\"]");}' +
+    'var showMaxIcon=(dbxWin.isMaximized&&dbxWin.isMaximized())?restoreIcon:maxIcon;' +
+    'wrap.innerHTML=\'<button type="button" data-win="max" title="最大化/还原" aria-label="最大化/还原">\'+showMaxIcon+\'</button>\'+\'<button type="button" data-win="min" title="最小化" aria-label="最小化">\'+minIcon+\'</button>\'+\'<button type="button" data-win="close" class="dbx-win-close" title="关闭" aria-label="关闭">\'+closeIcon+\'</button>\';' +
+    'bar.appendChild(wrap);' +
+    'if(console&&console.log)console.log("[DBX] custom window controls injected");' +
+    'wrap.addEventListener("click",function(e){' +
+    'var t=e.target.closest("button");if(!t)return;' +
+    'var act=t.getAttribute("data-win");var w=window.dbxNativeWindow;if(!w)return;' +
+    'if(act==="min")w.minimize();else if(act==="max"){var now=Date.now();if(now-lastMaxToggle<300)return;lastMaxToggle=now;w.toggleMaximize();var mb=wrap.querySelector("button[data-win=\\"max\\"]");if(mb)mb.innerHTML=(w.isMaximized&&w.isMaximized())?restoreIcon:maxIcon;}else if(act==="close")w.close();' +
+    '});' +
+    '}' +
+    'function isDragTarget(t){if(!t||!t.closest)return false;return !t.closest(\".dbx-window-controls,button,a,input,select,textarea,[contenteditable=\\\"true\\\"],[role=\\\"button\\\"]\");}' +
     'bar.addEventListener("pointerdown",function(e){' +
     'if(e.pointerType==="mouse"&&e.button!==0)return;var t=e.target;' +
     'if(!isDragTarget(t))return;' +
@@ -83,9 +106,6 @@ private windowInjectionScript: string =
   private harmonyDesktopModeScript: string =
     '(function(){' +
     'window.__HARMONY_DESKTOP__=true;' +
-    'function syncDark(){try{var dark=!!(document.documentElement&&document.documentElement.classList.contains("dark"));var b=window.dbxNativePrefs;console.log("DBX_THEME_SYNC",dark,"prefs",!!b,"method",!!(b&&b.setDarkMode));if(b&&b.setDarkMode)b.setDarkMode(dark);}catch(e){console.log("DBX_THEME_SYNC_ERR",String(e));}}' +
-    'if(window.__dbxDarkTimer)clearInterval(window.__dbxDarkTimer);' +
-    'window.__dbxDarkTimer=setInterval(syncDark,500);' +
     '})();'
   // Injects bottom safe-area padding so interactive web content is not covered
   // by the system navigation/three-button area. Reads the avoid height from the
@@ -222,23 +242,11 @@ private windowInjectionScript: string =
     const savedTheme: string = ThemePrefs.getPref('dbx-theme');
     this.darkLoading = savedTheme === 'dark';
     this.themeWatchTimer = setInterval(() => {
-      this.controller.runJavaScript("document.documentElement.classList.contains('dark')")
-        .then((v: string) => {
-          const next = v === 'true';
-          if (next !== this.darkLoading) {
-            this.darkLoading = next;
-            hilog.info(DOMAIN, TAG, 'dark mode changed via poll: %{public}s', next ? 'dark' : 'light');
-          }
-        }).catch((e: Error) => {
-        });
+      const current: string = ThemePrefs.getPref('dbx-theme');
+      this.darkLoading = current === 'dark';
     }, 500);
     hilog.info(DOMAIN, TAG, 'Index about to appear, webSrc=%{public}s, savedTheme=%{public}s',
       this.webSrc, savedTheme.length > 0 ? savedTheme : '(unset)');
-  }
-
-  onDarkModeChanged(): void {
-    this.darkLoading = this.darkMode;
-    hilog.info(DOMAIN, TAG, 'dark mode changed: %{public}s', this.darkMode ? 'dark' : 'light');
   }
 
   aboutToDisappear(): void {
@@ -266,6 +274,46 @@ private windowInjectionScript: string =
     }
   }
 
+  @Builder
+  windowControlsBuilder() {
+    Row() {
+      Row() {
+        Button('—')
+          .width(36)
+          .height(32)
+          .backgroundColor('#00000000')
+          .fontColor(this.darkLoading ? '#c8c8cc' : '#666666')
+          .accessibilityText('最小化')
+          .onClick(() => {
+            this.windowBridge.minimize();
+          })
+        Button('□')
+          .width(36)
+          .height(32)
+          .backgroundColor('#00000000')
+          .fontColor(this.darkLoading ? '#c8c8cc' : '#666666')
+          .accessibilityText('最大化/还原')
+          .onClick(() => {
+            this.windowBridge.toggleMaximize();
+          })
+        Button('✕')
+          .width(36)
+          .height(32)
+          .backgroundColor('#00000000')
+          .fontColor('#E5484D')
+          .accessibilityText('关闭')
+          .onClick(() => {
+            this.windowBridge.close();
+          })
+      }
+      .padding({ right: 12 })
+    }
+    .width('100%')
+    .height(40)
+    .justifyContent(FlexAlign.End)
+    .hitTestBehavior(HitTestMode.Transparent)
+  }
+
   onReloadTokenChanged(): void {
     if (this.reloadToken > 0) {
       hilog.info(DOMAIN, TAG, 'Reloading Web after service resume, token=%{public}d', this.reloadToken);
@@ -285,7 +333,7 @@ private windowInjectionScript: string =
         .javaScriptProxy({
           object: this.prefsBridge,
           name: 'dbxNativePrefs',
-          methodList: ['getPref', 'savePref', 'setDarkMode'],
+          methodList: ['getPref', 'savePref'],
           controller: this.controller
         })
         .javaScriptProxy({
@@ -316,6 +364,7 @@ private windowInjectionScript: string =
         .onlineImageAccess(true)
         .fileAccess(true)
         .zoomAccess(false)
+        .overlay(this.windowControlsBuilder())
         .onPageBegin(() => {
           this.loading = true;
           this.errorText = '';
@@ -325,19 +374,6 @@ private windowInjectionScript: string =
           this.loading = false;
           this.errorText = '';
           this.clearLoadingTimeout();
-          this.controller.runJavaScript("typeof window.dbxNativePrefs + '@' + (window.dbxNativePrefs ? typeof window.dbxNativePrefs.setDarkMode : 'none')")
-            .then((v: string) => {
-              hilog.info(DOMAIN, TAG, 'proxy-probe=%{public}s', v);
-            }).catch((e: Error) => {
-              hilog.warn(DOMAIN, TAG, 'proxy-probe-error=%{public}s', e.message);
-            });
-          this.controller.runJavaScript(
-            "(function(){var bar=document.querySelector('.app-toolbar');if(!bar)return 'no-bar';var last=bar.lastElementChild;var r=last?last.getBoundingClientRect():null;var br=bar.getBoundingClientRect();return JSON.stringify({pad:getComputedStyle(bar).paddingRight,barW:br.width,lastTag:last?last.tagName:null,lastRight:r?Math.round(r.right):null,barRight:Math.round(br.right)});})()")
-            .then((v: string) => {
-              hilog.info(DOMAIN, TAG, 'toolbar-probe=%{public}s', v);
-            }).catch((e: Error) => {
-              hilog.warn(DOMAIN, TAG, 'toolbar-probe-error=%{public}s', e.message);
-            });
           const hsync0: string = ThemePrefs.getPref('dbx-diag-hsync');
           hilog.info(DOMAIN, TAG, 'hsync-probe-0=%{public}s', hsync0.length > 0 ? hsync0 : '(empty)');
           this.controller.runJavaScript(
@@ -413,4 +449,3 @@ private windowInjectionScript: string =
     .backgroundColor(this.darkLoading ? '#131416' : '#F5F6F8')
   }
 }
-

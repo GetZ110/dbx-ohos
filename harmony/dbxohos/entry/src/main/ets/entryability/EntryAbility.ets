@@ -179,11 +179,13 @@ export default class EntryAbility extends UIAbility {
 
   private applyImmersiveWindow(mainWindow: window.Window): void {
     try {
-      // Keep only the system native window buttons. Web WindowControls are
-      // hidden on Harmony to avoid duplicate/overlapping controls.
-      mainWindow.setWindowDecorVisible(true);
-      mainWindow.setWindowTitleButtonVisible(true, true, true);
-      mainWindow.setWindowLayoutFullScreen(false);
+      // Immersive layout: hide the system title bar so the web toolbar can
+      // act as the title bar. Native window buttons are re-created as ArkUI
+      // overlay buttons fused into the toolbar area.
+      mainWindow.setWindowDecorVisible(false);
+      mainWindow.setWindowDecorHeight(0);
+      mainWindow.setWindowTitleButtonVisible(false, false, false);
+      mainWindow.setWindowLayoutFullScreen(true);
       // Try to make the window's system bar/dock area follow the app theme.
       // Note: the OS taskbar/dock (outside the app window) may still follow the
       // global system theme and be beyond per-app control.
@@ -198,7 +200,7 @@ export default class EntryAbility extends UIAbility {
       }).catch((err: BusinessError) => {
         hilog.warn(DOMAIN, TAG, 'setWindowSystemBarProperties failed: %{public}s', err.message);
       });
-      hilog.info(DOMAIN, TAG, '%{public}s', 'Web toolbar window mode applied');
+      hilog.info(DOMAIN, TAG, '%{public}s', 'Immersive toolbar window mode applied');
     } catch (err) {
       const e = err as BusinessError;
       hilog.warn(DOMAIN, TAG, 'applyImmersiveWindow partial failure: %{public}s', e.message);
