@@ -1,0 +1,1 @@
+import{n as e}from"./rolldown-runtime-Dd_uD5pT.js";var t=e({isDesktopRuntime:()=>i,isHarmonyDesktopRuntime:()=>r,isTauriRuntime:()=>n});function n(e=globalThis){return!!(e.__TAURI_INTERNALS__||e.__TAURI__)}function r(e=globalThis){return!!e.__HARMONY_DESKTOP__}function i(e=globalThis){return n(e)||r(e)}export{t as i,r as n,n as r,i as t};
