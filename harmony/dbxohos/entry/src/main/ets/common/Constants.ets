@@ -10,4 +10,6 @@ export class AppConstants {
   static readonly INDEX_FILE: string = 'index.html';
   static readonly SERVER_URL: string = `http://${AppConstants.HOST}:${AppConstants.WEB_PORT}/`;
   static readonly MCP_URL: string = `http://${AppConstants.HOST}:${AppConstants.MCP_PORT}/mcp`;
+  // Keep ArkWeb DevTools/CDP off in normal builds; enable only for local profiling.
+  static readonly ENABLE_WEB_DEBUG: boolean = false;
 }

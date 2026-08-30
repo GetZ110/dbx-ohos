@@ -103,9 +103,10 @@ export default class EntryAbility extends UIAbility {
     if (this.closing) {
       return;
     }
-    if (this.serviceActive) {
-      this.stopLocalService();
-    }
+    // Keep the local service and Web page alive in the background so returning
+    // to the app does not silently discard open tabs / unsaved SQL / query
+    // results. If the system later reaps the process, onWindowStageCreate will
+    // start a fresh cold-boot path.
   }
 
   private async startLocalService(loadPage: boolean): Promise<void> {

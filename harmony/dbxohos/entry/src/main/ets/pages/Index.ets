@@ -34,6 +34,7 @@ struct Index {
   private controller: webview.WebviewController = new webview.WebviewController();
   private prefsBridge: WebPrefsBridge = new WebPrefsBridge();
   private windowBridge: WindowBridge = new WindowBridge();
+  private loadingTimer: number = -1;
 private windowInjectionScript: string =
     '(function(){' +
     'function addStyle(){' +
@@ -44,6 +45,7 @@ private windowInjectionScript: string =
     '".dbx-window-controls button{width:32px;height:32px;display:inline-flex;align-items:center;justify-content:center;border:none;background:transparent;color:currentColor;border-radius:6px;cursor:default;font-size:14px;line-height:1;padding:0;margin:0 1px;}"+' +
     '".dbx-window-controls button:hover{background:rgba(128,128,128,0.15);}"+' +
     '".dbx-window-controls button:active{background:rgba(128,128,128,0.25);}"+' +
+    '".dbx-window-controls button:focus-visible{outline:2px solid rgba(59,130,246,0.8);outline-offset:2px;}"+' +
     '".dbx-window-controls .dbx-win-close:hover{background:rgba(224,49,49,0.1);color:#e5484d;}";' +
     'document.head.appendChild(s);' +
     '}' +
@@ -65,7 +67,7 @@ private windowInjectionScript: string =
     'var lastMaxToggle=0;' +
     'var dragStartX=0,dragStartY=0,dragMoved=false;' +
     'var showMaxIcon=(dbxWin.isMaximized&&dbxWin.isMaximized())?restoreIcon:maxIcon;' +
-    'wrap.innerHTML=\'<button data-win="max" title="最大化/还原">\'+showMaxIcon+\'</button>\'+\'<button data-win="min" title="最小化">\'+minIcon+\'</button>\'+\'<button data-win="close" class="dbx-win-close" title="关闭">\'+closeIcon+\'</button>\';' +
+    'wrap.innerHTML=\'<button type="button" data-win="max" title="最大化/还原" aria-label="最大化/还原">\'+showMaxIcon+\'</button>\'+\'<button type="button" data-win="min" title="最小化" aria-label="最小化">\'+minIcon+\'</button>\'+\'<button type="button" data-win="close" class="dbx-win-close" title="关闭" aria-label="关闭">\'+closeIcon+\'</button>\';' +
     'bar.appendChild(wrap);' +
     'if(console&&console.log)console.log("[DBX] custom window controls injected");' +
     'wrap.addEventListener("click",function(e){' +
@@ -73,17 +75,19 @@ private windowInjectionScript: string =
     'var act=t.getAttribute("data-win");var w=window.dbxNativeWindow;if(!w)return;' +
     'if(act==="min")w.minimize();else if(act==="max"){var now=Date.now();if(now-lastMaxToggle<300)return;lastMaxToggle=now;w.toggleMaximize();var mb=wrap.querySelector("button[data-win=\\"max\\"]");if(mb)mb.innerHTML=(w.isMaximized&&w.isMaximized())?restoreIcon:maxIcon;}else if(act==="close")w.close();' +
     '});' +
-    'bar.addEventListener("mousedown",function(e){' +
-    'if(e.button!==0)return;var t=e.target;' +
-    'if(t.closest&&t.closest(".dbx-window-controls,button,a,input,select,textarea,[contenteditable=\\"true\\"],[role=\\"button\\"]"))return;' +
+    'function isDragTarget(t){if(!t||!t.closest)return false;return !t.closest(\".dbx-window-controls,button,a,input,select,textarea,[contenteditable=\\\"true\\\"],[role=\\\"button\\\"]\");}' +
+    'bar.addEventListener("pointerdown",function(e){' +
+    'if(e.pointerType==="mouse"&&e.button!==0)return;var t=e.target;' +
+    'if(!isDragTarget(t))return;' +
     'dragStartX=e.clientX;dragStartY=e.clientY;dragMoved=false;' +
     '});' +
-    'bar.addEventListener("mousemove",function(e){' +
+    'bar.addEventListener("pointermove",function(e){' +
     'if(dragStartX===0&&dragStartY===0)return;' +
     'var dx=e.clientX-dragStartX,dy=e.clientY-dragStartY;' +
     'if(!dragMoved&&Math.abs(dx)+Math.abs(dy)>=4){dragMoved=true;var w=window.dbxNativeWindow;if(w&&w.startMove)w.startMove();}' +
     '});' +
-    'document.addEventListener("mouseup",function(){dragStartX=0;dragStartY=0;dragMoved=false;});' +
+    'document.addEventListener("pointerup",function(){dragStartX=0;dragStartY=0;dragMoved=false;});' +
+    'document.addEventListener("pointercancel",function(){dragStartX=0;dragStartY=0;dragMoved=false;});' +
     '}catch(e){}' +
     '}' +
     'if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",inject);else inject();' +
@@ -213,13 +217,35 @@ private windowInjectionScript: string =
     '})();';
 
   aboutToAppear(): void {
-    // Diagnostic: expose ArkWeb DevTools (CDP) for in-page profiling.
-    // TODO: remove or gate behind a debug flag before release.
-    webview.WebviewController.setWebDebuggingAccess(true);
+    // Keep ArkWeb DevTools/CDP off in normal builds; enable only for local profiling.
+    if (AppConstants.ENABLE_WEB_DEBUG) {
+      webview.WebviewController.setWebDebuggingAccess(true);
+    }
     const savedTheme: string = ThemePrefs.getPref('dbx-theme');
     this.darkLoading = savedTheme === 'dark';
     hilog.info(DOMAIN, TAG, 'Index about to appear, webSrc=%{public}s, savedTheme=%{public}s',
       this.webSrc, savedTheme.length > 0 ? savedTheme : '(unset)');
+  }
+
+  aboutToDisappear(): void {
+    this.clearLoadingTimeout();
+  }
+
+  private startLoadingTimeout(): void {
+    this.clearLoadingTimeout();
+    this.loadingTimer = setTimeout(() => {
+      if (this.loading) {
+        this.loading = false;
+        this.errorText = '页面加载超时，请重试或检查本地服务';
+      }
+    }, 15000);
+  }
+
+  private clearLoadingTimeout(): void {
+    if (this.loadingTimer !== -1) {
+      clearTimeout(this.loadingTimer);
+      this.loadingTimer = -1;
+    }
   }
 
   onReloadTokenChanged(): void {
@@ -272,10 +298,12 @@ private windowInjectionScript: string =
         .onPageBegin(() => {
           this.loading = true;
           this.errorText = '';
+          this.startLoadingTimeout();
         })
         .onPageEnd(() => {
           this.loading = false;
           this.errorText = '';
+          this.clearLoadingTimeout();
           const hsync0: string = ThemePrefs.getPref('dbx-diag-hsync');
           hilog.info(DOMAIN, TAG, 'hsync-probe-0=%{public}s', hsync0.length > 0 ? hsync0 : '(empty)');
           this.controller.runJavaScript(
@@ -299,6 +327,7 @@ private windowInjectionScript: string =
           }
           this.loading = false;
           this.errorText = `加载失败 (${event.error.getErrorCode()}) ${event.error.getErrorInfo()}`;
+          this.clearLoadingTimeout();
           hilog.error(DOMAIN, TAG, 'Main frame load error: %{public}s', JSON.stringify(event));
         })
         .onConsole((event) => {
@@ -329,7 +358,7 @@ private windowInjectionScript: string =
         Column() {
           Text(this.errorText)
             .fontSize(18)
-            .fontColor('#333333')
+            .fontColor(this.darkLoading ? '#c8c8cc' : '#333333')
           Button('重新加载')
             .margin({ top: 16 })
             .onClick(() => {
@@ -341,11 +370,11 @@ private windowInjectionScript: string =
         .width('100%')
         .height('100%')
         .justifyContent(FlexAlign.Center)
-        .backgroundColor('#F5F6F8')
+        .backgroundColor(this.darkLoading ? '#131416' : '#F5F6F8')
       }
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('#F5F6F8')
+    .backgroundColor(this.darkLoading ? '#131416' : '#F5F6F8')
   }
 }

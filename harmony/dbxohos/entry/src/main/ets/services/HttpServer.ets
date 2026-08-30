@@ -160,6 +160,14 @@ export class HttpServer {
       this.sendJson(client, 200, body);
       return;
     }
+    if (path === '/api/auth/check') {
+      // Fallback mode has no password protection; keep the SPA out of the
+      // LoginPage/setup flow so window controls remain reachable.
+      const body: string =
+        '{"authenticated":true,"required":false,"setup_required":false}';
+      this.sendJson(client, 200, body);
+      return;
+    }
     const body: string =
       '{"error":"native-backend-not-integrated","message":"This DBX API route requires the Rust dbx-core native backend (.so)."}';
     this.sendJson(client, 501, body);
