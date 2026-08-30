@@ -179,21 +179,12 @@ export default class EntryAbility extends UIAbility {
 
   private applyImmersiveWindow(mainWindow: window.Window): void {
     try {
-      // Immersive 2-in-1 layout: hide the system title bar/decor so the web
-      // app toolbar can act as the application title bar.
-      mainWindow.setWindowDecorVisible(false);
-      // Keep a sane reserved height for the system three-button hit area if the
-      // device still renders it; our web injection shows custom left controls.
-      mainWindow.setWindowDecorHeight(40);
-      // Hide the default right-side window controls; the web toolbar shows
-      // custom minimize/maximize/close buttons on the left instead.
-      mainWindow.setWindowTitleButtonVisible(false, false, false);
-      // Make the page layout occupy the whole window (no separate title bar).
-      // Deliberately do NOT enable system title-move/drag handling: the app
-      // toolbar handles drag/maximize through the injected JS bridge, and
-      // enabling both paths causes a double toggle (maximize plays and then
-      // immediately restores).
-      mainWindow.setWindowLayoutFullScreen(true);
+      // Use the system title bar and native window controls on 2in1/PC.
+      // ArkUI siblings cannot reliably overlay the Web native surface, so
+      // custom in-page buttons are not visible; native title buttons are.
+      mainWindow.setWindowDecorVisible(true);
+      mainWindow.setWindowTitleButtonVisible(true, true, true);
+      mainWindow.setWindowLayoutFullScreen(false);
       // Try to make the window's system bar/dock area follow the app theme.
       // Note: the OS taskbar/dock (outside the app window) may still follow the
       // global system theme and be beyond per-app control.
@@ -208,12 +199,7 @@ export default class EntryAbility extends UIAbility {
       }).catch((err: BusinessError) => {
         hilog.warn(DOMAIN, TAG, 'setWindowSystemBarProperties failed: %{public}s', err.message);
       });
-      // Do not show the system title bar / dock when the mouse hits the screen
-      // edge while the window is maximized/immersive.
-      mainWindow.setTitleAndDockHoverShown(false, false).catch((err: BusinessError) => {
-        hilog.warn(DOMAIN, TAG, 'setTitleAndDockHoverShown failed: %{public}s', err.message);
-      });
-      hilog.info(DOMAIN, TAG, '%{public}s', 'Immersive window mode applied');
+      hilog.info(DOMAIN, TAG, '%{public}s', 'Native window title bar mode applied');
     } catch (err) {
       const e = err as BusinessError;
       hilog.warn(DOMAIN, TAG, 'applyImmersiveWindow partial failure: %{public}s', e.message);

@@ -271,7 +271,7 @@ private windowInjectionScript: string =
   }
 
   build() {
-    Stack({ alignContent: Alignment.TopEnd }) {
+    Stack() {
       // Full-screen Web component: adapts to PC and tablet automatically.
       Web({ src: this.webSrc, controller: this.controller })
         .width('100%')
@@ -391,38 +391,6 @@ private windowInjectionScript: string =
         .backgroundColor(this.darkLoading ? '#131416' : '#F5F6F8')
       }
 
-      // Native HarmonyOS window controls (ArkUI, not web).
-      Row() {
-        Button('—')
-          .width(36)
-          .height(32)
-          .backgroundColor('#00000000')
-          .fontColor(this.darkLoading ? '#c8c8cc' : '#666666')
-          .accessibilityText('最小化')
-          .onClick(() => {
-            this.windowBridge.minimize();
-          })
-        Button('□')
-          .width(36)
-          .height(32)
-          .backgroundColor('#00000000')
-          .fontColor(this.darkLoading ? '#c8c8cc' : '#666666')
-          .accessibilityText('最大化/还原')
-          .onClick(() => {
-            this.windowBridge.toggleMaximize();
-          })
-        Button('✕')
-          .width(36)
-          .height(32)
-          .backgroundColor('#00000000')
-          .fontColor('#E5484D')
-          .accessibilityText('关闭')
-          .onClick(() => {
-            this.windowBridge.close();
-          })
-      }
-      .margin({ top: 4, right: 8 })
-      .zIndex(10)
     }
     .width('100%')
     .height('100%')
