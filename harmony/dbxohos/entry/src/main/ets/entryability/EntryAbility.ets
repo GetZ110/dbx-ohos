@@ -1,4 +1,4 @@
-import { AbilityConstant, ConfigurationConstant, UIAbility, Want, common } from '@kit.AbilityKit';
+import { AbilityConstant, Configuration, ConfigurationConstant, UIAbility, Want, common } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
 import { BusinessError } from '@kit.BasicServicesKit';
@@ -38,12 +38,23 @@ export default class EntryAbility extends UIAbility {
       }
       // Set on the UIAbilityContext (and the application context) so the system
       // chrome/dock can follow the app theme like other apps do when foreground.
-      context.setColorMode(mode);
-      context.getApplicationContext().setColorMode(mode);
+      // For 'system'/'unset', do NOT force a color mode: letting the OS default
+      // propagate keeps window.matchMedia/prefers-color-scheme in sync with the
+      // real system light/dark state.
+      if (savedTheme === 'dark' || savedTheme === 'light') {
+        context.setColorMode(mode);
+        context.getApplicationContext().setColorMode(mode);
+      }
       hilog.info(DOMAIN, TAG, 'Ability onCreate, colorMode=%{public}d, savedTheme=%{public}s',
         mode, savedTheme.length > 0 ? savedTheme : '(unset)');
     } catch (err) {
       hilog.error(DOMAIN, TAG, 'Failed to set colorMode. Cause: %{public}s', JSON.stringify(err));
+    }
+  }
+
+  onConfigurationUpdate(newConfig: Configuration): void {
+    if (newConfig.colorMode !== undefined) {
+      WindowBridge.setSystemColorMode(newConfig.colorMode);
     }
   }
 
@@ -65,6 +76,11 @@ export default class EntryAbility extends UIAbility {
       WindowBridge.init(mainWindow, () => {
         this.handleWindowClose();
       });
+      const ctx = this.context as common.UIAbilityContext;
+      const config = ctx.resourceManager.getConfigurationSync();
+      if (config.colorMode !== undefined) {
+        WindowBridge.setSystemColorMode(config.colorMode);
+      }
       this.applyImmersiveWindow(mainWindow);
     } catch (err) {
       const e = err as BusinessError;

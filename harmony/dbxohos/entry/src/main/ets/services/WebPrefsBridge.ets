@@ -1,4 +1,5 @@
 import { ThemePrefs } from './ThemePrefs';
+import { WindowBridge } from './WindowBridge';
 
 /**
  * JavaScript bridge object exposed to the Web page as `window.dbxNativePrefs`.
@@ -14,5 +15,10 @@ export class WebPrefsBridge {
 
   savePref(key: string, value: string): void {
     ThemePrefs.savePref(key, value);
+    if (key === 'dbx-theme') {
+      // Update the native title-button colors immediately, without waiting for
+      // a polling interval on the ArkTS side.
+      WindowBridge.setThemeMode(value);
+    }
   }
 }

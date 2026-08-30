@@ -1,6 +1,7 @@
 import { window } from '@kit.ArkUI';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { BusinessError } from '@kit.BasicServicesKit';
+import { ConfigurationConstant } from '@kit.AbilityKit';
 import { ThemePrefs } from './ThemePrefs';
 
 const DOMAIN = 0xDB8;
@@ -22,6 +23,14 @@ export class WindowBridge {
   private static avoidListenerBound: boolean = false;
   // Bottom navigation/side three-button avoid area height in px (0 when absent).
   private static bottomNavHeight: number = 0;
+  // Right-side space to reserve in the web toolbar so native window buttons do
+  // not overlap toolbar actions. Updated from getTitleButtonRect().
+  private static titleButtonReserveWidth: number = 8;
+  private static lastDarkMode: boolean | null = null;
+  private static themeMode: string = '';
+  // Numeric value from resourceManager.ColorMode / ConfigurationConstant.ColorMode:
+  // -1 means unset, 0 dark, 1 light.
+  private static systemColorMode: number = -1;
 
   /**
    * Called from EntryAbility once the main window is available.
@@ -30,8 +39,10 @@ export class WindowBridge {
     WindowBridge.mainWindow = mainWindow;
     WindowBridge.closeHandler = closeHandler;
     WindowBridge.maximized = false;
+    WindowBridge.lastDarkMode = null;
     WindowBridge.refreshBottomNavHeight(mainWindow);
     WindowBridge.registerAvoidListener(mainWindow);
+    WindowBridge.setThemeMode(ThemePrefs.getPref('dbx-theme'));
     hilog.info(DOMAIN, TAG, 'WindowBridge initialized');
 
     if (!WindowBridge.statusListenerBound) {
@@ -179,6 +190,143 @@ export class WindowBridge {
     win.startMoving().catch((err: BusinessError) => {
       hilog.warn(DOMAIN, TAG, 'startMoving failed: %{public}s', err.message);
     });
+  }
+
+  /**
+   * Called from the Web page when the actual light/dark appearance changes.
+   * This only updates the native window-button color. It intentionally does NOT
+   * change the saved theme mode, so a 'system' theme stays 'system' even while
+   * the buttons follow the current system appearance.
+   */
+  setDarkMode(dark: boolean): void {
+    if (WindowBridge.lastDarkMode === dark) {
+      return;
+    }
+    WindowBridge.applyDecorButtonStyle(dark);
+  }
+
+  /**
+   * Called from the Web page to sync the actual UI theme mode into the native
+   * layer. Unlike setDarkMode, this updates the saved mode and AppStorage so a
+   * stale 'dark'/'light' preference is corrected when the UI is on 'system'.
+   */
+  setThemeModeFromWeb(mode: string): void {
+    WindowBridge.setThemeMode(mode);
+  }
+
+  /**
+   * Called by WebPrefsBridge whenever the Web UI persists a new theme mode.
+   * 'dark'/'light' explicitly set the native title-button style; 'system' lets
+   * the OS keep control and resets the cached override.
+   */
+  static setThemeMode(mode: string): void {
+    WindowBridge.themeMode = mode;
+    AppStorage.setOrCreate('dbx_theme_mode', mode);
+    // Keep native Preferences in sync with the live Web theme mode so a cold
+    // start can show the loading page in the correct app theme immediately.
+    ThemePrefs.savePref('dbx-theme', mode);
+    let dark: boolean | null = null;
+    if (mode === 'dark') {
+      dark = true;
+    } else if (mode === 'light') {
+      dark = false;
+    } else {
+      dark = WindowBridge.getSystemDark();
+      if (dark !== null) {
+        AppStorage.setOrCreate('dbx_system_dark', dark);
+      }
+    }
+    if (dark === null) {
+      WindowBridge.lastDarkMode = null;
+      return;
+    }
+    if (WindowBridge.lastDarkMode === dark) {
+      return;
+    }
+    WindowBridge.applyDecorButtonStyle(dark);
+  }
+
+  /**
+   * Called by EntryAbility when the system/app configuration reports a new
+   * color mode. Used when the Web theme is set to 'system'.
+   */
+  static setSystemColorMode(mode: number): void {
+    WindowBridge.systemColorMode = mode;
+    if (WindowBridge.themeMode === 'system' && (mode === 0 || mode === 1)) {
+      AppStorage.setOrCreate('dbx_system_dark', mode === 0);
+    }
+    if (WindowBridge.themeMode !== 'system') {
+      return;
+    }
+    const dark: boolean | null = WindowBridge.getSystemDark();
+    if (dark === null) {
+      WindowBridge.lastDarkMode = null;
+      return;
+    }
+    if (WindowBridge.lastDarkMode === dark) {
+      return;
+    }
+    WindowBridge.applyDecorButtonStyle(dark);
+  }
+
+  static getSystemDarkMode(): boolean | null {
+    return WindowBridge.getSystemDark();
+  }
+
+  private static getSystemDark(): boolean | null {
+    if (WindowBridge.systemColorMode === 0) {
+      return true;
+    }
+    if (WindowBridge.systemColorMode === 1) {
+      return false;
+    }
+    return null;
+  }
+
+  private static applyDecorButtonStyle(dark: boolean): void {
+    const win = WindowBridge.mainWindow;
+    if (!win) {
+      return;
+    }
+    try {
+      const colorMode = dark
+        ? ConfigurationConstant.ColorMode.COLOR_MODE_DARK
+        : ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT;
+      win.setDecorButtonStyle({ colorMode: colorMode });
+      WindowBridge.lastDarkMode = dark;
+      hilog.info(DOMAIN, TAG, 'decor button style applied, dark=%{public}s', dark ? 'true' : 'false');
+    } catch (err) {
+      const e = err as BusinessError;
+      hilog.warn(DOMAIN, TAG, 'setDecorButtonStyle failed: %{public}s', e.message);
+    }
+  }
+
+  /**
+   * Right-side toolbar padding (px) to keep native window buttons clear of the
+   * web toolbar actions. The returned value is the measured title button strip
+   * width plus a small gap matching the toolbar's button spacing.
+   */
+  getTitleButtonReserveWidth(): number {
+    const win = WindowBridge.mainWindow;
+    if (!win) {
+      return WindowBridge.titleButtonReserveWidth;
+    }
+    try {
+      const rect = win.getTitleButtonRect();
+      if (rect) {
+        // TitleButtonRect is relative to the upper-right corner: width is the
+        // button strip width and right is any extra offset from the right edge.
+        const gap = 4;
+        const reserve = Math.ceil((rect.width > 0 ? rect.width : 0) + (rect.right > 0 ? rect.right : 0) + gap);
+        if (reserve > 0) {
+          WindowBridge.titleButtonReserveWidth = reserve;
+        }
+      }
+    } catch (err) {
+      const e = err as BusinessError;
+      hilog.warn(DOMAIN, TAG, 'getTitleButtonRect failed: %{public}s', e.message);
+    }
+    return WindowBridge.titleButtonReserveWidth;
   }
 
   /**

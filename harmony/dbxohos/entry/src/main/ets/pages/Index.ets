@@ -1,5 +1,6 @@
 import { webview } from '@kit.ArkWeb';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { common } from '@kit.AbilityKit';
 import { AppConstants } from '../common/Constants';
 import { WebPrefsBridge } from '../services/WebPrefsBridge';
 import { ThemePrefs } from '../services/ThemePrefs';
@@ -30,11 +31,14 @@ struct Index {
   @State loading: boolean = true;
   @State errorText: string = '';
   @State darkLoading: boolean = false;
+  @StorageProp('dbx_system_dark') @Watch('onSystemDarkChanged') systemDark: boolean = false;
   @StorageProp('dbx_reload_token') @Watch('onReloadTokenChanged') reloadToken: number = 0;
   private controller: webview.WebviewController = new webview.WebviewController();
   private prefsBridge: WebPrefsBridge = new WebPrefsBridge();
   private windowBridge: WindowBridge = new WindowBridge();
   private loadingTimer: number = -1;
+  private hideLoadingTimer: number = -1;
+  private firstContentfulPaintReceived: boolean = false;
   private themeWatchTimer: number = -1;
 private windowInjectionScript: string =
     '(function(){' +
@@ -42,8 +46,6 @@ private windowInjectionScript: string =
     'if(!document.getElementById("dbx-win-style")&&document.head){' +
     'var s=document.createElement("style");s.id="dbx-win-style";' +
     's.textContent=' +
-    '".app-toolbar{padding-right:144px!important;}"+' +
-    '".app-toolbar > div:last-child{margin-right:160px!important;}"' +
     '".dbx-window-controls{display:inline-flex;align-items:center;height:100%;margin-left:2px;user-select:none;-webkit-user-select:none;flex-shrink:0;}"+' +
     '".dbx-window-controls button{width:32px;height:32px;display:inline-flex;align-items:center;justify-content:center;border:none;background:transparent;color:currentColor;border-radius:6px;cursor:default;font-size:14px;line-height:1;padding:0;margin:0 1px;}"+' +
     '".dbx-window-controls button:hover{background:rgba(128,128,128,0.15);}"+' +
@@ -57,7 +59,7 @@ private windowInjectionScript: string =
     'try{' +
     'addStyle();' +
     'var bar=document.querySelector(".app-toolbar");' +
-    'if(!bar||document.getElementById("dbx-window-controls"))return;' +
+    'if(!bar)return;' +
     'var harmonyDesktop=!!(window.__HARMONY_DESKTOP__||window.__TAURI_INTERNALS__);' +
     'if(!document.getElementById("dbx-window-controls")&&!harmonyDesktop){' +
     'var wrap=document.createElement("div");' +
@@ -70,7 +72,6 @@ private windowInjectionScript: string =
     'var minIcon=svgIcon(\'<line x1="5" y1="12" x2="19" y2="12"/>\');' +
     'var closeIcon=svgIcon(\'<path d="M18 6 6 18"/><path d="m6 6 12 12"/>\');' +
     'var lastMaxToggle=0;' +
-    'var dragStartX=0,dragStartY=0,dragMoved=false;' +
     'var showMaxIcon=(dbxWin.isMaximized&&dbxWin.isMaximized())?restoreIcon:maxIcon;' +
     'wrap.innerHTML=\'<button type="button" data-win="max" title="最大化/还原" aria-label="最大化/还原">\'+showMaxIcon+\'</button>\'+\'<button type="button" data-win="min" title="最小化" aria-label="最小化">\'+minIcon+\'</button>\'+\'<button type="button" data-win="close" class="dbx-win-close" title="关闭" aria-label="关闭">\'+closeIcon+\'</button>\';' +
     'bar.appendChild(wrap);' +
@@ -78,10 +79,12 @@ private windowInjectionScript: string =
     'wrap.addEventListener("click",function(e){' +
     'var t=e.target.closest("button");if(!t)return;' +
     'var act=t.getAttribute("data-win");var w=window.dbxNativeWindow;if(!w)return;' +
-    'if(act==="min")w.minimize();else if(act==="max"){var now=Date.now();if(now-lastMaxToggle<300)return;lastMaxToggle=now;w.toggleMaximize();var mb=wrap.querySelector("button[data-win=\\"max\\"]");if(mb)mb.innerHTML=(w.isMaximized&&w.isMaximized())?restoreIcon:maxIcon;}else if(act==="close")w.close();' +
+    'if(act==="min")w.minimize();else if(act==="max"){var now=Date.now();if(now-lastMaxToggle<300)return;lastMaxToggle=now;w.toggleMaximize();var mb=wrap.querySelector(\'button[data-win="max"]\');if(mb)mb.innerHTML=(w.isMaximized&&w.isMaximized())?restoreIcon:maxIcon;}else if(act==="close")w.close();' +
     '});' +
     '}' +
-    'function isDragTarget(t){if(!t||!t.closest)return false;return !t.closest(\".dbx-window-controls,button,a,input,select,textarea,[contenteditable=\\\"true\\\"],[role=\\\"button\\\"]\");}' +
+    'if(bar.__dbxDragBound)return;bar.__dbxDragBound=true;' +
+    'var dragStartX=0,dragStartY=0,dragMoved=false;' +
+    'function isDragTarget(t){if(!t||!t.closest)return false;return !t.closest(\'.dbx-window-controls,button,a,input,select,textarea,[contenteditable="true"],[role="button"]\');}' +
     'bar.addEventListener("pointerdown",function(e){' +
     'if(e.pointerType==="mouse"&&e.button!==0)return;var t=e.target;' +
     'if(!isDragTarget(t))return;' +
@@ -106,9 +109,12 @@ private windowInjectionScript: string =
   private harmonyDesktopModeScript: string =
     '(function(){' +
     'window.__HARMONY_DESKTOP__=true;' +
-    'function ensureSpacing(){try{var s=document.getElementById("dbx-hm-spacing");if(!s&&document.head){s=document.createElement("style");s.id="dbx-hm-spacing";document.head.appendChild(s);}if(s)s.textContent=".app-toolbar{padding-right:204px!important}.app-toolbar > div:last-child{margin-right:0!important}";}catch(e){}}' +
-    'if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",ensureSpacing);else ensureSpacing();' +
+    'function syncDecorTheme(){try{var mode=null;try{mode=localStorage.getItem("dbx-theme");}catch(e){}var w=window.dbxNativeWindow;if(!w||!w.setThemeModeFromWeb)return;w.setThemeModeFromWeb(mode||"system");}catch(e){}}' +
+    'function ensureSpacing(){try{var s=document.getElementById("dbx-hm-spacing");if(!s&&document.head){s=document.createElement("style");s.id="dbx-hm-spacing";document.head.appendChild(s);}var w=window.dbxNativeWindow;var reserve=8;if(w&&w.getTitleButtonReserveWidth)reserve=w.getTitleButtonReserveWidth()||8;if(s)s.textContent=".app-toolbar{padding-right:"+reserve+"px!important}.app-toolbar > div:last-child{margin-right:0!important}";}catch(e){}}' +
+    'function boot(){ensureSpacing();syncDecorTheme();try{if(document.documentElement&&window.MutationObserver){new MutationObserver(function(){syncDecorTheme();ensureSpacing();}).observe(document.documentElement,{attributes:true,attributeFilter:["class"],childList:false,subtree:false});}}catch(e){}}' +
+    'if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",boot);else boot();' +
     'setInterval(ensureSpacing,1000);' +
+    'setInterval(syncDecorTheme,1000);' +
     '})();'
   // Injects bottom safe-area padding so interactive web content is not covered
   // by the system navigation/three-button area. Reads the avoid height from the
@@ -242,18 +248,35 @@ private windowInjectionScript: string =
     if (AppConstants.ENABLE_WEB_DEBUG) {
       webview.WebviewController.setWebDebuggingAccess(true);
     }
+    ThemePrefs.init(getContext(this) as common.UIAbilityContext);
     const savedTheme: string = ThemePrefs.getPref('dbx-theme');
-    this.darkLoading = savedTheme === 'dark';
+    this.refreshLoadingTheme();
     this.themeWatchTimer = setInterval(() => {
-      const current: string = ThemePrefs.getPref('dbx-theme');
-      this.darkLoading = current === 'dark';
+      this.refreshLoadingTheme();
     }, 500);
     hilog.info(DOMAIN, TAG, 'Index about to appear, webSrc=%{public}s, savedTheme=%{public}s',
       this.webSrc, savedTheme.length > 0 ? savedTheme : '(unset)');
   }
 
+  private refreshLoadingTheme(): void {
+    const mode: string = AppStorage.get<string>('dbx_theme_mode') ?? ThemePrefs.getPref('dbx-theme');
+    if (mode === 'dark') {
+      this.darkLoading = true;
+    } else if (mode === 'light') {
+      this.darkLoading = false;
+    } else {
+      const systemDark = WindowBridge.getSystemDarkMode();
+      this.darkLoading = systemDark ?? AppStorage.get<boolean>('dbx_system_dark') ?? false;
+    }
+  }
+
+  onSystemDarkChanged(): void {
+    this.refreshLoadingTheme();
+  }
+
   aboutToDisappear(): void {
     this.clearLoadingTimeout();
+    this.clearHideLoadingTimer();
     if (this.themeWatchTimer !== -1) {
       clearInterval(this.themeWatchTimer);
       this.themeWatchTimer = -1;
@@ -277,6 +300,40 @@ private windowInjectionScript: string =
     }
   }
 
+  private clearHideLoadingTimer(): void {
+    if (this.hideLoadingTimer !== -1) {
+      clearTimeout(this.hideLoadingTimer);
+      this.hideLoadingTimer = -1;
+    }
+  }
+
+  private waitForWebReadyThenHide(): void {
+    this.clearHideLoadingTimer();
+    let attempts: number = 0;
+    const tryHide = () => {
+      if (!this.loading) {
+        return;
+      }
+      this.controller.runJavaScript(
+        "document.documentElement.classList.contains('dark')")
+        .then((v: string) => {
+          const webDark: boolean = v === 'true';
+          if (!this.darkLoading || webDark || attempts >= 40) {
+            this.loading = false;
+            this.hideLoadingTimer = -1;
+          } else {
+            attempts++;
+            this.hideLoadingTimer = setTimeout(tryHide, 50);
+          }
+        })
+        .catch(() => {
+          this.loading = false;
+          this.hideLoadingTimer = -1;
+        });
+    };
+    this.hideLoadingTimer = setTimeout(tryHide, 80);
+  }
+
   onReloadTokenChanged(): void {
     if (this.reloadToken > 0) {
       hilog.info(DOMAIN, TAG, 'Reloading Web after service resume, token=%{public}d', this.reloadToken);
@@ -290,6 +347,7 @@ private windowInjectionScript: string =
       Web({ src: this.webSrc, controller: this.controller })
         .width('100%')
         .height('100%')
+        .darkMode(WebDarkMode.Auto)
         .javaScriptAccess(true)
         .domStorageAccess(true)
         .databaseAccess(true)
@@ -302,7 +360,7 @@ private windowInjectionScript: string =
         .javaScriptProxy({
           object: this.windowBridge,
           name: 'dbxNativeWindow',
-          methodList: ['minimize', 'toggleMaximize', 'close', 'startMove', 'isMaximized', 'getBottomNavHeight'],
+          methodList: ['minimize', 'toggleMaximize', 'close', 'startMove', 'isMaximized', 'getBottomNavHeight', 'getTitleButtonReserveWidth', 'setDarkMode', 'setThemeModeFromWeb'],
           controller: this.controller
         })
         .javaScriptOnDocumentStart([{
@@ -328,14 +386,20 @@ private windowInjectionScript: string =
         .fileAccess(true)
         .zoomAccess(false)
         .onPageBegin(() => {
+          this.clearHideLoadingTimer();
+          this.firstContentfulPaintReceived = false;
           this.loading = true;
           this.errorText = '';
           this.startLoadingTimeout();
         })
         .onPageEnd(() => {
-          this.loading = false;
           this.errorText = '';
           this.clearLoadingTimeout();
+          // Fallback hide if onFirstContentfulPaint is not delivered.
+          this.clearHideLoadingTimer();
+          this.hideLoadingTimer = setTimeout(() => {
+            this.waitForWebReadyThenHide();
+          }, 2000);
           const hsync0: string = ThemePrefs.getPref('dbx-diag-hsync');
           hilog.info(DOMAIN, TAG, 'hsync-probe-0=%{public}s', hsync0.length > 0 ? hsync0 : '(empty)');
           this.controller.runJavaScript(
@@ -350,12 +414,16 @@ private windowInjectionScript: string =
             hilog.info(DOMAIN, TAG, 'hsync-probe-1=%{public}s', hsync1.length > 0 ? hsync1 : '(empty)');
           }, 4000);
           this.controller.runJavaScript(
-            "(function(){var bar=document.querySelector('.app-toolbar');if(!bar||bar.__dbxDragBound2)return;bar.__dbxDragBound2=true;var sx=0,sy=0,moved=false;function isTarget(t){return !(t&&t.closest&&t.closest('button,a,input,select,textarea,[contenteditable=\"true\"],[role=\"button\"]'));}bar.addEventListener('pointerdown',function(e){if(e.pointerType==='mouse'&&e.button!==0)return;if(!isTarget(e.target))return;sx=e.clientX;sy=e.clientY;moved=false;});bar.addEventListener('pointermove',function(e){if(sx===0&&sy===0)return;var dx=e.clientX-sx,dy=e.clientY-sy;if(!moved&&Math.abs(dx)+Math.abs(dy)>=4){moved=true;var w=window.dbxNativeWindow;if(w&&w.startMove)w.startMove();}});document.addEventListener('pointerup',function(){sx=0;sy=0;moved=false;});document.addEventListener('pointercancel',function(){sx=0;sy=0;moved=false;});})()")
+            "(function(){var bar=document.querySelector('.app-toolbar');if(!bar||bar.__dbxDragBound)return;bar.__dbxDragBound=true;var sx=0,sy=0,moved=false;function isTarget(t){return !(t&&t.closest&&t.closest('button,a,input,select,textarea,[contenteditable=\"true\"],[role=\"button\"]'));}bar.addEventListener('pointerdown',function(e){if(e.pointerType==='mouse'&&e.button!==0)return;if(!isTarget(e.target))return;sx=e.clientX;sy=e.clientY;moved=false;});bar.addEventListener('pointermove',function(e){if(sx===0&&sy===0)return;var dx=e.clientX-sx,dy=e.clientY-sy;if(!moved&&Math.abs(dx)+Math.abs(dy)>=4){moved=true;var w=window.dbxNativeWindow;if(w&&w.startMove)w.startMove();}});document.addEventListener('pointerup',function(){sx=0;sy=0;moved=false;});document.addEventListener('pointercancel',function(){sx=0;sy=0;moved=false;});})()")
             .then((v: string) => {
               hilog.info(DOMAIN, TAG, 'drag-bind-ok');
             }).catch((e: Error) => {
               hilog.warn(DOMAIN, TAG, 'drag-bind-error=%{public}s', e.message);
             });
+        })
+        .onFirstContentfulPaint(() => {
+          this.firstContentfulPaintReceived = true;
+          this.waitForWebReadyThenHide();
         })
         .onErrorReceive((event: WebErrorReceiveEvent) => {
           if (!event.request.isMainFrame()) {
