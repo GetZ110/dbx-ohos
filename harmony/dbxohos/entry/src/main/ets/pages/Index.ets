@@ -35,13 +35,14 @@ struct Index {
   private prefsBridge: WebPrefsBridge = new WebPrefsBridge();
   private windowBridge: WindowBridge = new WindowBridge();
   private loadingTimer: number = -1;
+  private themeWatchTimer: number = -1;
 private windowInjectionScript: string =
     '(function(){' +
     'function addStyle(){' +
     'if(!document.getElementById("dbx-win-style")&&document.head){' +
     'var s=document.createElement("style");s.id="dbx-win-style";' +
     's.textContent=' +
-    '".app-toolbar{padding-right:120px!important;}"+' +
+    '".app-toolbar{padding-right:144px!important;}"+' +
     '".dbx-window-controls{display:inline-flex;align-items:center;height:100%;margin-left:2px;user-select:none;-webkit-user-select:none;flex-shrink:0;}"+' +
     '".dbx-window-controls button{width:32px;height:32px;display:inline-flex;align-items:center;justify-content:center;border:none;background:transparent;color:currentColor;border-radius:6px;cursor:default;font-size:14px;line-height:1;padding:0;margin:0 1px;}"+' +
     '".dbx-window-controls button:hover{background:rgba(128,128,128,0.15);}"+' +
@@ -239,12 +240,20 @@ private windowInjectionScript: string =
     }
     const savedTheme: string = ThemePrefs.getPref('dbx-theme');
     this.darkLoading = savedTheme === 'dark';
+    this.themeWatchTimer = setInterval(() => {
+      const current: string = ThemePrefs.getPref('dbx-theme');
+      this.darkLoading = current === 'dark';
+    }, 500);
     hilog.info(DOMAIN, TAG, 'Index about to appear, webSrc=%{public}s, savedTheme=%{public}s',
       this.webSrc, savedTheme.length > 0 ? savedTheme : '(unset)');
   }
 
   aboutToDisappear(): void {
     this.clearLoadingTimeout();
+    if (this.themeWatchTimer !== -1) {
+      clearInterval(this.themeWatchTimer);
+      this.themeWatchTimer = -1;
+    }
   }
 
   private startLoadingTimeout(): void {
