@@ -186,6 +186,9 @@ export default class EntryAbility extends UIAbility {
       mainWindow.setWindowDecorHeight(0);
       mainWindow.setWindowTitleButtonVisible(false, false, false);
       mainWindow.setWindowLayoutFullScreen(true);
+      // Allow dragging/maximize via the hidden title-bar area without showing
+      // a separate title bar.
+      mainWindow.setWindowTitleMoveEnabled(true);
       // Try to make the window's system bar/dock area follow the app theme.
       // Note: the OS taskbar/dock (outside the app window) may still follow the
       // global system theme and be beyond per-app control.
