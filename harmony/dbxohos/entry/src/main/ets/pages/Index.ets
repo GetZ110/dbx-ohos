@@ -57,31 +57,9 @@ private windowInjectionScript: string =
     'try{' +
     'addStyle();' +
     'var bar=document.querySelector(".app-toolbar");' +
-    'if(!bar||document.getElementById("dbx-window-controls"))return;' +
-    'var harmonyDesktop=!!(window.__HARMONY_DESKTOP__||window.__TAURI_INTERNALS__);' +
-    'if(!document.getElementById("dbx-window-controls")&&!harmonyDesktop){' +
-    'var wrap=document.createElement("div");' +
-    'wrap.id="dbx-window-controls";' +
-    'wrap.className="dbx-window-controls";' +
-    'var dbxWin=window.dbxNativeWindow||{};' +
-    'function svgIcon(inner){return \'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">\'+inner+\'</svg>\';}' +
-    'var maxIcon=svgIcon(\'<rect x="3" y="3" width="18" height="18" rx="1"/>\');' +
-    'var restoreIcon=svgIcon(\'<rect width="14" height="14" x="8" y="8" rx="1" ry="1"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>\');' +
-    'var minIcon=svgIcon(\'<line x1="5" y1="12" x2="19" y2="12"/>\');' +
-    'var closeIcon=svgIcon(\'<path d="M18 6 6 18"/><path d="m6 6 12 12"/>\');' +
-    'var lastMaxToggle=0;' +
+    'if(!bar)return;' +
     'var dragStartX=0,dragStartY=0,dragMoved=false;' +
-    'var showMaxIcon=(dbxWin.isMaximized&&dbxWin.isMaximized())?restoreIcon:maxIcon;' +
-    'wrap.innerHTML=\'<button type="button" data-win="max" title="最大化/还原" aria-label="最大化/还原">\'+showMaxIcon+\'</button>\'+\'<button type="button" data-win="min" title="最小化" aria-label="最小化">\'+minIcon+\'</button>\'+\'<button type="button" data-win="close" class="dbx-win-close" title="关闭" aria-label="关闭">\'+closeIcon+\'</button>\';' +
-    'bar.appendChild(wrap);' +
-    'if(console&&console.log)console.log("[DBX] custom window controls injected");' +
-    'wrap.addEventListener("click",function(e){' +
-    'var t=e.target.closest("button");if(!t)return;' +
-    'var act=t.getAttribute("data-win");var w=window.dbxNativeWindow;if(!w)return;' +
-    'if(act==="min")w.minimize();else if(act==="max"){var now=Date.now();if(now-lastMaxToggle<300)return;lastMaxToggle=now;w.toggleMaximize();var mb=wrap.querySelector("button[data-win=\\"max\\"]");if(mb)mb.innerHTML=(w.isMaximized&&w.isMaximized())?restoreIcon:maxIcon;}else if(act==="close")w.close();' +
-    '});' +
-    '}' +
-    'function isDragTarget(t){if(!t||!t.closest)return false;return !t.closest(\".dbx-window-controls,button,a,input,select,textarea,[contenteditable=\\\"true\\\"],[role=\\\"button\\\"]\");}' +
+    'function isDragTarget(t){if(!t||!t.closest)return false;return !t.closest(".dbx-window-controls,button,a,input,select,textarea,[contenteditable=\\\"true\\\"],[role=\\\"button\\\"]");}' +
     'bar.addEventListener("pointerdown",function(e){' +
     'if(e.pointerType==="mouse"&&e.button!==0)return;var t=e.target;' +
     'if(!isDragTarget(t))return;' +
@@ -254,6 +232,7 @@ private windowInjectionScript: string =
 
   onDarkModeChanged(): void {
     this.darkLoading = this.darkMode;
+    hilog.info(DOMAIN, TAG, 'dark mode changed: %{public}s', this.darkMode ? 'dark' : 'light');
   }
 
   aboutToDisappear(): void {
@@ -287,8 +266,8 @@ private windowInjectionScript: string =
       Button('—')
         .width(36)
         .height(32)
-        .backgroundColor('#66000000')
-        .fontColor('#FFFFFF')
+        .backgroundColor('#00000000')
+        .fontColor(this.darkLoading ? '#FFFFFF' : '#000000')
         .accessibilityText('最小化')
         .onClick(() => {
           this.windowBridge.minimize();
@@ -296,8 +275,8 @@ private windowInjectionScript: string =
       Button('□')
         .width(36)
         .height(32)
-        .backgroundColor('#66000000')
-        .fontColor('#FFFFFF')
+        .backgroundColor('#00000000')
+        .fontColor(this.darkLoading ? '#FFFFFF' : '#000000')
         .accessibilityText('最大化/还原')
         .onClick(() => {
           this.windowBridge.toggleMaximize();
@@ -305,8 +284,8 @@ private windowInjectionScript: string =
       Button('✕')
         .width(36)
         .height(32)
-        .backgroundColor('#66000000')
-        .fontColor('#FFFFFF')
+        .backgroundColor('#00000000')
+        .fontColor(this.darkLoading ? '#FFFFFF' : '#000000')
         .accessibilityText('关闭')
         .onClick(() => {
           this.windowBridge.close();

@@ -1,4 +1,8 @@
 import { ThemePrefs } from './ThemePrefs';
+import { hilog } from '@kit.PerformanceAnalysisKit';
+
+const DOMAIN = 0xDB9;
+const TAG = 'DBX_THEME_BRIDGE';
 
 /**
  * JavaScript bridge object exposed to the Web page as `window.dbxNativePrefs`.
@@ -22,6 +26,7 @@ export class WebPrefsBridge {
    * guessing from the saved theme preference.
    */
   setDarkMode(dark: boolean): void {
+    hilog.info(DOMAIN, TAG, 'setDarkMode called: %{public}s', dark ? 'dark' : 'light');
     AppStorage.setOrCreate('dbx_dark_mode', dark);
   }
 }
