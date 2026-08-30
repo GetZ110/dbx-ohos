@@ -30,6 +30,7 @@ struct Index {
   @State loading: boolean = true;
   @State errorText: string = '';
   @State darkLoading: boolean = false;
+  @StorageProp('dbx_dark_mode') @Watch('onDarkModeChanged') darkMode: boolean = false;
   @StorageProp('dbx_reload_token') @Watch('onReloadTokenChanged') reloadToken: number = 0;
   private controller: webview.WebviewController = new webview.WebviewController();
   private prefsBridge: WebPrefsBridge = new WebPrefsBridge();
@@ -105,6 +106,9 @@ private windowInjectionScript: string =
   private harmonyDesktopModeScript: string =
     '(function(){' +
     'window.__HARMONY_DESKTOP__=true;' +
+    'function syncDark(){try{var b=window.dbxNativePrefs;if(b&&b.setDarkMode&&document.documentElement)b.setDarkMode(document.documentElement.classList.contains("dark"));}catch(e){}}' +
+    'if(window.__dbxDarkTimer)clearInterval(window.__dbxDarkTimer);' +
+    'window.__dbxDarkTimer=setInterval(syncDark,500);' +
     '})();'
   // Injects bottom safe-area padding so interactive web content is not covered
   // by the system navigation/three-button area. Reads the avoid height from the
@@ -248,6 +252,10 @@ private windowInjectionScript: string =
       this.webSrc, savedTheme.length > 0 ? savedTheme : '(unset)');
   }
 
+  onDarkModeChanged(): void {
+    this.darkLoading = this.darkMode;
+  }
+
   aboutToDisappear(): void {
     this.clearLoadingTimeout();
     if (this.themeWatchTimer !== -1) {
@@ -326,7 +334,7 @@ private windowInjectionScript: string =
         .javaScriptProxy({
           object: this.prefsBridge,
           name: 'dbxNativePrefs',
-          methodList: ['getPref', 'savePref'],
+          methodList: ['getPref', 'savePref', 'setDarkMode'],
           controller: this.controller
         })
         .javaScriptProxy({
