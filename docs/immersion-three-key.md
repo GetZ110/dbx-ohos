@@ -127,3 +127,63 @@ export default class EntryAbility extends UIAbility {
 - 2in1 目标设备上，若不想默认隐藏三键，至少要在布局时对 `TYPE_NAVIGATION_INDICATOR` 和右上角标题栏三键区做避让。
 - Web 组件底部内容（如输入框、按钮）需避开底部导航区，可在 Web 容器外层加 padding / 监听 `avoidAreaChange`。
 - 注意接口在 2in1 上的兼容性：优先用真机验证（当前已连 HUAWEI MateBook Pro API 26 2in1）。
+
+
+---
+
+## 八、本项目当前分支的落地方式（feat/harmony-desktop-mode）
+
+> 当前 `feat/harmony-desktop-mode` 分支与 `main` 的主要差异集中在 2in1/PC 窗口化与主题同步。以下为本分支实际采用的实现。
+
+### 8.1 窗口形态
+
+```ts
+mainWindow.setWindowDecorVisible(false);
+mainWindow.setWindowDecorHeight(0);
+mainWindow.setWindowTitleButtonVisible(false, false, false);
+mainWindow.setWindowLayoutFullScreen(true);
+mainWindow.setWindowTitleMoveEnabled(true); // 允许系统标题栏区域拖拽/双击最大化
+```
+
+- 隐藏系统标题栏，让 DBX Web 工具栏作为应用标题栏；
+- 设备上仍保留系统原生窗口按钮（最小化 / 最大化 / 关闭）；
+- 因此必须给 Web 工具栏右侧预留按钮区域，避免重叠。
+
+### 8.2 原生窗口按钮主题跟随
+
+- `WindowBridge.applyDecorButtonStyle(dark)` 调用：
+  ```ts
+  win.setDecorButtonStyle({
+    colorMode: dark
+      ? ConfigurationConstant.ColorMode.COLOR_MODE_DARK
+      : ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT
+  });
+  ```
+- Web 主题变化链路：
+  ```
+  Web localStorage
+    -> WebPrefsBridge.savePref('dbx-theme', mode)
+    -> WindowBridge.setThemeMode(mode)
+    -> ThemePrefs.savePref / AppStorage
+    -> setDecorButtonStyle
+  ```
+- `system` 模式下通过 `resourceManager.getConfigurationSync()`、`onConfigurationUpdate` 与 Web `darkMode(Auto)` 获取真实系统亮暗，且不会把 `system` 误写成 `dark`。
+
+### 8.3 右侧避让
+
+- `WindowBridge.getTitleButtonReserveWidth()` 读取 `getTitleButtonRect()`；
+- 按实际按钮区宽度 + 4px 工具按钮间距，动态设置 `.app-toolbar` 的 `padding-right`；
+- 避免硬编码造成“窗口按钮与工具按钮之间过宽或重叠”。
+
+### 8.4 拖拽与双击
+
+- `setWindowTitleMoveEnabled(true)` 提供系统级拖拽/双击能力；
+- Web 注入脚本在工具栏空白区域监听 `pointerdown` / `pointermove`，移动超过阈值后调用 `WindowBridge.startMove()`；
+- 事件绑定增加 `__dbxDragBound` 防重复，避免 `startMoving()` 重复调用。
+
+### 8.5 加载页主题与防白闪
+
+- 加载页读取软件设置主题：`light` / `dark` / `system`；
+- `system` 时读取系统真实亮暗；
+- Web 组件设置 `.darkMode(WebDarkMode.Auto)`；
+- 使用 `onFirstContentfulPaint` 后再隐藏加载层，避免 ArkWeb 首帧白色闪烁。

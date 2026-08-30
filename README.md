@@ -52,10 +52,17 @@ cp target/release/libdbx_ohos.so \
 - [x] 启动优化：MCP 复用 `AppState`，避免二次打开 SQLite 导致冷启动变慢
 - [x] 一键启动脚本 `start-dbx.sh`（宿主机开发用）
 - [x] HarmonyOS 构建/移植文档
+- [x] 2in1 沉浸式工具栏：隐藏系统标题栏，Web 工具栏作为标题栏，原生窗口按钮保留
+- [x] 窗口按钮主题跟随：通过 `setDecorButtonStyle()` 随应用/系统亮暗切换颜色
+- [x] 窗口按钮动态避让：通过 `getTitleButtonRect()` 动态计算工具栏右侧预留宽度
+- [x] 窗口顶部拖拽/双击最大化：`setWindowTitleMoveEnabled` + JS `startMoving()`
+- [x] 加载页/启动主题：读取软件设置主题，`system` 模式跟随系统真实亮暗
+- [x] Web 组件 `darkMode(Auto)`：`prefers-color-scheme` 跟随系统
+- [x] 加载页防白闪：首次内容绘制（`onFirstContentfulPaint`）后再隐藏加载层
 
 ## 待办
 
-- [ ] P2：PC/平板 UX 优化（触摸适配、原生标题栏/侧边栏、按窗口类型布局、启动加载页跟随已保存的明暗主题）
+- [ ] P2：PC/平板 UX 优化（触摸适配、原生侧边栏、按窗口类型布局）
 - [ ] P2：查询表格 **Canvas 渲染模式流畅度优化**（当前 Canvas 自绘网格为每帧全量重绘：可见格 × `fillText` + `measureText`，且背板 = `dpr² × uiScale`，大数据量滚动在 ArkWeb 上一帧画不完导致丢帧。计划改增量绘制：行块纹理离屏缓存 + 平移贴图 + DPR 降级；优化落地前，UI 已支持「视图选项 → 渲染模式切 DOM」作为流畅兜底）
 - [ ] 待研究：系统全局任务栏/Dock 颜色随应用主题（当前应用侧无法控制，最大化后 Dock 仍为系统色）
 - [ ] P3：沙箱数据备份/导出/导入、连接加密确认、云同步验证
@@ -63,6 +70,23 @@ cp target/release/libdbx_ohos.so \
 - [ ] P5：原生 ArkUI 替换连接管理 / SQL 编辑器（长期）
 - [ ] P6：构建脚本、patch 文档、ohosTest 单元测试
 - [ ] 可选：MCP 拆分到独立端口（当前与 Web 共用 `4224/mcp`）
+
+## 当前分支方案（PC / 2in1）
+
+当前 `feat/harmony-desktop-mode` 分支采用“沉浸式 + Web 工具栏作为标题栏”的方案：
+
+- `EntryAbility` 隐藏系统标题栏，进入全屏沉浸布局；
+- 保留系统原生窗口按钮（最小化 / 最大化 / 关闭），并让按钮颜色随应用/系统主题切换；
+- Web 端注入脚本把窗口动作桥接到原生 `WindowBridge`：
+  - 最小化 / 最大化 / 关闭
+  - 工具栏空白区域拖拽窗口
+  - 双击最大化 / 还原
+- 工具栏右侧通过 `getTitleButtonRect()` 动态预留系统按钮区域，避免与 Web 工具按钮重叠；
+- 主题链路：Web `localStorage` → `WebPrefsBridge.savePref` → `WindowBridge.setThemeMode` → 原生 `setDecorButtonStyle` / `AppStorage`；
+- 加载页读取软件设置主题；`system` 模式时读取系统真实亮暗；Web 使用 `darkMode(Auto)` 让 `prefers-color-scheme` 跟随系统；
+- 加载页在 `onFirstContentfulPaint` 后再隐藏，避免 ArkWeb 白色首帧闪烁。
+
+> 与 `main` 分支相比，本分支主要差异集中在 2in1 窗口化适配、原生窗口按钮主题同步、加载页主题与防白闪逻辑。
 
 ## 移植说明
 

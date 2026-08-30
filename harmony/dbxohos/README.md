@@ -45,7 +45,10 @@ dbxohos/
 │       │       ├── RawFileCopier.ets # rawfile -> 沙箱
 │       │       ├── HttpServer.ets    # ArkTS 本地 HTTP 服务（回退/MCP）
 │       │       ├── ServerHealthChecker.ets # 启动就绪探测
-│       │       └── McpServer.ets     # MCP JSON-RPC stub
+│       │       ├── McpServer.ets     # MCP JSON-RPC stub
+│       │       ├── ThemePrefs.ets    # 主题/外观偏好原生持久化
+│       │       ├── WebPrefsBridge.ets # Web -> 原生主题桥
+│       │       └── WindowBridge.ets  # 窗口控制/拖拽/按钮主题桥
 │       ├── libs/arm64-v8a/
 │       │   └── libdbx_ohos.so        # Rust dbx-web NAPI 原生库
 │       └── resources/
@@ -121,16 +124,21 @@ POST http://127.0.0.1:4224/mcp
 
 ## 6. PC / 平板适配说明
 
-当前 v1 采用全屏 `Web` 组件，天然适配不同窗口尺寸：
+当前分支采用“沉浸式 + Web 工具栏作为标题栏”的 2in1/PC 方案：
 
-- PC：窗口可缩放，Web 全屏填充。
-- 平板：竖屏/横屏自适应，Web 自动重排。
-- 触控：Web 组件默认支持触摸滚动、点击；后续针对 DBX 的右键菜单、拖拽、快捷键做触屏适配。
+- 隐藏系统标题栏，进入全屏沉浸布局；
+- 保留系统原生窗口按钮（最小化 / 最大化 / 关闭），并通过 `setDecorButtonStyle()` 让按钮颜色随应用/系统主题切换；
+- Web 工具栏空白区域支持鼠标/触屏拖拽移动窗口；
+- 双击工具栏空白区域可最大化 / 还原；
+- 工具栏右侧通过 `getTitleButtonRect()` 动态预留原生按钮区域，避免与 Web 工具按钮重叠；
+- Web 组件设置 `darkMode(Auto)`，使 `prefers-color-scheme` 跟随系统。
+
+平板/手机类设备仍为全屏 `Web` 自适应布局；触控滚动/点击由 Web 组件默认支持。
 
 后续计划：
 
 - 根据 `window.getWindowProperties()` 区分 PC/平板布局。
-- 增加原生标题栏、侧边栏、命令面板等 ArkUI 原生组件。
+- 增加原生侧边栏、命令面板等 ArkUI 原生组件。
 - 将高频操作（连接管理、SQL 编辑器）逐步 ArkUI 原生化。
 
 ---
@@ -168,6 +176,8 @@ cp target/release/libdbx_ohos.so \
 - ✅ 修复冷启动竞态：`onWindowStageCreate` 与 `onForeground` 共享同一次启动流程，避免双 Web 实例导致 IndexedDB/localStorage 无法持久化（明暗主题丢失）
 - ✅ 恢复时只触发 Web reload，不再重复 `loadContent`，避免再次产生双 Web 实例
 - ✅ 主题/外观偏好增加原生 Preferences 持久化：`javaScriptOnDocumentStart` 注入脚本在 SPA 启动前恢复 `localStorage`，并拦截 `dbx-*` 写入同步到原生存储
+- ✅ 窗口按钮主题跟随：`WindowBridge.setThemeMode()` / `setDarkMode()` 将 Web 主题同步到原生 `setDecorButtonStyle()`
+- ✅ 加载页主题：读取软件设置主题，`system` 模式跟随系统真实亮暗；`onFirstContentfulPaint` 后再隐藏加载层，避免白色闪烁
 - ✅ MCP 复用已打开的 `AppState`，不再二次打开 SQLite，显著缩短冷启动时间
 
 ### 7.4 下一步
@@ -202,6 +212,7 @@ entry/src/main/ets/services/ServerHealthChecker.ets
 entry/src/main/ets/services/McpServer.ets
 entry/src/main/ets/services/ThemePrefs.ets
 entry/src/main/ets/services/WebPrefsBridge.ets
+entry/src/main/ets/services/WindowBridge.ets
 entry/libs/arm64-v8a/libdbx_ohos.so
 entry/src/main/resources/rawfile/dbx-dist/
 ```
