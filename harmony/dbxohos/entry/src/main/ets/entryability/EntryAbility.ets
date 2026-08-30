@@ -179,8 +179,9 @@ export default class EntryAbility extends UIAbility {
 
   private applyImmersiveWindow(mainWindow: window.Window): void {
     try {
-      // Fused toolbar window buttons: hide the system title bar and overlay
-      // ArkUI window buttons onto the web toolbar.
+      // Hide the system title bar; the web toolbar (with its own window
+      // controls) acts as the title bar. Window actions still go through the
+      // native dbxNativeWindow bridge.
       mainWindow.setWindowDecorVisible(false);
       mainWindow.setWindowDecorHeight(0);
       mainWindow.setWindowTitleButtonVisible(false, false, false);
@@ -199,7 +200,7 @@ export default class EntryAbility extends UIAbility {
       }).catch((err: BusinessError) => {
         hilog.warn(DOMAIN, TAG, 'setWindowSystemBarProperties failed: %{public}s', err.message);
       });
-      hilog.info(DOMAIN, TAG, '%{public}s', 'Fused toolbar window mode applied');
+      hilog.info(DOMAIN, TAG, '%{public}s', 'Web toolbar window mode applied');
     } catch (err) {
       const e = err as BusinessError;
       hilog.warn(DOMAIN, TAG, 'applyImmersiveWindow partial failure: %{public}s', e.message);
