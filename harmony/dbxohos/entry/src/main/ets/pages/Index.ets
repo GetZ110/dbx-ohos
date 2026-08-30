@@ -106,7 +106,7 @@ private windowInjectionScript: string =
   private harmonyDesktopModeScript: string =
     '(function(){' +
     'window.__HARMONY_DESKTOP__=true;' +
-    'function ensureSpacing(){try{var s=document.getElementById("dbx-hm-spacing");if(!s&&document.head){s=document.createElement("style");s.id="dbx-hm-spacing";document.head.appendChild(s);}if(s)s.textContent=".app-toolbar{padding-right:280px!important}.app-toolbar > div:last-child{margin-right:0!important}";}catch(e){}}' +
+    'function ensureSpacing(){try{var s=document.getElementById("dbx-hm-spacing");if(!s&&document.head){s=document.createElement("style");s.id="dbx-hm-spacing";document.head.appendChild(s);}if(s)s.textContent=".app-toolbar{padding-right:272px!important}.app-toolbar > div:last-child{margin-right:0!important}";}catch(e){}}' +
     'if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",ensureSpacing);else ensureSpacing();' +
     'setInterval(ensureSpacing,1000);' +
     '})();'
@@ -349,6 +349,13 @@ private windowInjectionScript: string =
             const hsync1: string = ThemePrefs.getPref('dbx-diag-hsync');
             hilog.info(DOMAIN, TAG, 'hsync-probe-1=%{public}s', hsync1.length > 0 ? hsync1 : '(empty)');
           }, 4000);
+          this.controller.runJavaScript(
+            "(function(){var bar=document.querySelector('.app-toolbar');if(!bar||bar.__dbxDragBound2)return;bar.__dbxDragBound2=true;var sx=0,sy=0,moved=false;function isTarget(t){return !(t&&t.closest&&t.closest('button,a,input,select,textarea,[contenteditable=\"true\"],[role=\"button\"]'));}bar.addEventListener('pointerdown',function(e){if(e.pointerType==='mouse'&&e.button!==0)return;if(!isTarget(e.target))return;sx=e.clientX;sy=e.clientY;moved=false;});bar.addEventListener('pointermove',function(e){if(sx===0&&sy===0)return;var dx=e.clientX-sx,dy=e.clientY-sy;if(!moved&&Math.abs(dx)+Math.abs(dy)>=4){moved=true;var w=window.dbxNativeWindow;if(w&&w.startMove)w.startMove();}});document.addEventListener('pointerup',function(){sx=0;sy=0;moved=false;});document.addEventListener('pointercancel',function(){sx=0;sy=0;moved=false;});})()")
+            .then((v: string) => {
+              hilog.info(DOMAIN, TAG, 'drag-bind-ok');
+            }).catch((e: Error) => {
+              hilog.warn(DOMAIN, TAG, 'drag-bind-error=%{public}s', e.message);
+            });
         })
         .onErrorReceive((event: WebErrorReceiveEvent) => {
           if (!event.request.isMainFrame()) {
