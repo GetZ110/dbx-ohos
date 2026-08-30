@@ -179,13 +179,11 @@ export default class EntryAbility extends UIAbility {
 
   private applyImmersiveWindow(mainWindow: window.Window): void {
     try {
-      // Hide the system title bar; the web toolbar (with its own window
-      // controls) acts as the title bar. Window actions still go through the
-      // native dbxNativeWindow bridge.
-      mainWindow.setWindowDecorVisible(false);
-      mainWindow.setWindowDecorHeight(0);
-      mainWindow.setWindowTitleButtonVisible(false, false, false);
-      mainWindow.setWindowLayoutFullScreen(true);
+      // Keep only the system native window buttons. Web WindowControls are
+      // hidden on Harmony to avoid duplicate/overlapping controls.
+      mainWindow.setWindowDecorVisible(true);
+      mainWindow.setWindowTitleButtonVisible(true, true, true);
+      mainWindow.setWindowLayoutFullScreen(false);
       // Try to make the window's system bar/dock area follow the app theme.
       // Note: the OS taskbar/dock (outside the app window) may still follow the
       // global system theme and be beyond per-app control.
