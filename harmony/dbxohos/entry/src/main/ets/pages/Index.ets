@@ -122,6 +122,10 @@ private windowInjectionScript: string =
     'if(cmd==="plugin:window|theme"){resolve("light");return;}' +
     'if(cmd==="plugin:event|listen"||cmd==="plugin:window|on_resized"){resolve(function(){});return;}' +
     'if(cmd==="plugin:resources|close"){resolve();return;}' +
+    'if(cmd==="list_installed_agents_local"||cmd==="list_installed_agents"){resolve([]);return;}' +
+    'if(cmd==="is_agent_installed"){resolve(false);return;}' +
+    'if(cmd==="get_app_version"){resolve("");return;}' +
+    'if(cmd==="get_app_support_info"||cmd==="get_driver_store_usage"||cmd==="jdbc_plugin_status"){resolve({});return;}' +
     'reject(new Error("Harmony bridge: unsupported command "+cmd));' +
     '}catch(e){reject(e);}' +
     '});' +
