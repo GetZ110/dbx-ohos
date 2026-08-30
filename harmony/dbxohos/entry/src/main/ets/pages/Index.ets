@@ -160,6 +160,10 @@ private windowInjectionScript: string =
     'shell.style.width="max-content";' +
     'shell.style.overflow="visible";' +
     'shell.style.boxShadow="0 1px 0 rgba(128,128,128,0.18)";' +
+    'shell.style.minHeight="28px";' +
+    'shell.style.height="28px";' +
+    'shell.style.visibility="visible";' +
+    'shell.style.flexShrink="0";' +
     'sc.insertBefore(shell,sc.firstChild);' +
     '}catch(e){}' +
     '}' +
@@ -267,7 +271,7 @@ private windowInjectionScript: string =
   }
 
   build() {
-    Stack() {
+    Stack({ alignContent: Alignment.TopEnd }) {
       // Full-screen Web component: adapts to PC and tablet automatically.
       Web({ src: this.webSrc, controller: this.controller })
         .width('100%')
@@ -301,6 +305,9 @@ private windowInjectionScript: string =
           scriptRules: ['*']
         }, {
           script: this.gridWheelNativeScrollScript,
+          scriptRules: ['*']
+        }, {
+          script: this.gridHeaderInScrollerScript,
           scriptRules: ['*']
         }])
         .onlineImageAccess(true)
@@ -383,6 +390,38 @@ private windowInjectionScript: string =
         .justifyContent(FlexAlign.Center)
         .backgroundColor(this.darkLoading ? '#131416' : '#F5F6F8')
       }
+
+      // Native HarmonyOS window controls (ArkUI, not web).
+      Row() {
+        Button('—')
+          .width(36)
+          .height(32)
+          .backgroundColor('#00000000')
+          .fontColor(this.darkLoading ? '#c8c8cc' : '#666666')
+          .accessibilityText('最小化')
+          .onClick(() => {
+            this.windowBridge.minimize();
+          })
+        Button('□')
+          .width(36)
+          .height(32)
+          .backgroundColor('#00000000')
+          .fontColor(this.darkLoading ? '#c8c8cc' : '#666666')
+          .accessibilityText('最大化/还原')
+          .onClick(() => {
+            this.windowBridge.toggleMaximize();
+          })
+        Button('✕')
+          .width(36)
+          .height(32)
+          .backgroundColor('#00000000')
+          .fontColor('#E5484D')
+          .accessibilityText('关闭')
+          .onClick(() => {
+            this.windowBridge.close();
+          })
+      }
+      .margin({ top: 4, right: 8 })
     }
     .width('100%')
     .height('100%')
