@@ -183,7 +183,7 @@ export default class EntryAbility extends UIAbility {
       // act as the title bar. Native window buttons are re-created as ArkUI
       // overlay buttons fused into the toolbar area.
       mainWindow.setWindowDecorVisible(false);
-      mainWindow.setWindowDecorHeight(40);
+      mainWindow.setWindowDecorHeight(0);
       mainWindow.setWindowTitleButtonVisible(false, false, false);
       mainWindow.setWindowLayoutFullScreen(true);
       // Allow dragging/maximize via the hidden title-bar area without showing
