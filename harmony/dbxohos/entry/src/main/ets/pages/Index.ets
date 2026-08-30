@@ -422,6 +422,7 @@ private windowInjectionScript: string =
           })
       }
       .margin({ top: 4, right: 8 })
+      .zIndex(10)
     }
     .width('100%')
     .height('100%')
