@@ -55,7 +55,7 @@ private windowInjectionScript: string =
     'addStyle();' +
     'var bar=document.querySelector(".app-toolbar");' +
     'if(!bar||document.getElementById("dbx-window-controls"))return;' +
-    'var harmonyDesktop=!!(window.__HARMONY_DESKTOP__||window.__TAURI_INTERNALS__);' +
+    'var harmonyDesktop=!!window.__TAURI_INTERNALS__;' +
     'if(!document.getElementById("dbx-window-controls")&&!harmonyDesktop){' +
     'var wrap=document.createElement("div");' +
     'wrap.id="dbx-window-controls";' +
@@ -96,48 +96,13 @@ private windowInjectionScript: string =
     'if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",inject);else inject();' +
     'if(window.MutationObserver){var mo=new MutationObserver(inject);mo.observe(document.documentElement,{childList:true,subtree:true});}' +
     '})();'
-  // Unified runtime mode (Plan B): mark the page as a HarmonyOS desktop-like
-  // runtime and provide a minimal __TAURI_INTERNALS__ bridge for the Tauri
-  // window APIs DBX actually uses. Without this, the web frontend treats the
-  // app as a plain browser and disables desktop window/file/zoom features.
+  // Unified runtime mode (Plan B) marker: tells the web frontend this is a
+  // HarmonyOS desktop-like environment. Backend selection still uses the HTTP
+  // API (do NOT set __TAURI_INTERNALS__ here, otherwise api.ts would switch to
+  // the Tauri backend and break connect_db etc.).
   private harmonyDesktopModeScript: string =
     '(function(){' +
-    'if(window.__HARMONY_DESKTOP__)return;' +
     'window.__HARMONY_DESKTOP__=true;' +
-    'var native=window.dbxNativeWindow||{};' +
-    'var callbacks={};var nextCallbackId=1;' +
-    'function transformCallback(cb){var id=nextCallbackId++;callbacks[id]=cb;return id;}' +
-    'function unregisterCallback(id){delete callbacks[id];}' +
-    'function invoke(cmd){' +
-    'return new Promise(function(resolve,reject){' +
-    'try{' +
-    'if(cmd==="plugin:window|is_maximized"){resolve(!!(native.isMaximized&&native.isMaximized()));return;}' +
-    'if(cmd==="plugin:window|is_minimized"||cmd==="plugin:window|is_fullscreen"||cmd==="plugin:window|is_decorated"){resolve(false);return;}' +
-    'if(cmd==="plugin:window|is_resizable"||cmd==="plugin:window|is_maximizable"||cmd==="plugin:window|is_minimizable"||cmd==="plugin:window|is_closable"||cmd==="plugin:window|is_visible"){resolve(true);return;}' +
-    'if(cmd==="plugin:window|minimize"){native.minimize&&native.minimize();resolve();return;}' +
-    'if(cmd==="plugin:window|toggle_maximize"||cmd==="plugin:window|maximize"||cmd==="plugin:window|unmaximize"){native.toggleMaximize&&native.toggleMaximize();resolve();return;}' +
-    'if(cmd==="plugin:window|close"){native.close&&native.close();resolve();return;}' +
-    'if(cmd==="plugin:window|start_dragging"){native.startMove&&native.startMove();resolve();return;}' +
-    'if(cmd==="plugin:window|set_theme"||cmd==="plugin:window|set_title"||cmd==="plugin:window|set_size"||cmd==="plugin:window|set_position"||cmd==="plugin:window|center"){resolve();return;}' +
-    'if(cmd==="plugin:window|theme"){resolve("light");return;}' +
-    'if(cmd==="plugin:event|listen"||cmd==="plugin:window|on_resized"){resolve(function(){});return;}' +
-    'if(cmd==="plugin:resources|close"){resolve();return;}' +
-    'if(cmd==="list_installed_agents_local"||cmd==="list_installed_agents"){resolve([]);return;}' +
-    'if(cmd==="is_agent_installed"){resolve(false);return;}' +
-    'if(cmd==="get_app_version"){resolve("");return;}' +
-    'if(cmd==="get_app_support_info"||cmd==="get_driver_store_usage"||cmd==="jdbc_plugin_status"){resolve({});return;}' +
-    'reject(new Error("Harmony bridge: unsupported command "+cmd));' +
-    '}catch(e){reject(e);}' +
-    '});' +
-    '}' +
-    'window.__TAURI_INTERNALS__={' +
-    'metadata:{currentWindow:{label:"main"},currentWebview:{label:"main"}},' +
-    'invoke:invoke,' +
-    'transformCallback:transformCallback,' +
-    'unregisterCallback:unregisterCallback' +
-    '};' +
-    'window.__TAURI_EVENT_PLUGIN_INTERNALS__={unregisterListener:function(){return Promise.resolve();}};' +
-    'window.__TAURI__={};' +
     '})();'
   // Injects bottom safe-area padding so interactive web content is not covered
   // by the system navigation/three-button area. Reads the avoid height from the
