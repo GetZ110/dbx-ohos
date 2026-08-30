@@ -88,6 +88,44 @@ cp target/release/libdbx_ohos.so \
 
 > 与 `main` 分支相比，本分支主要差异集中在 2in1 窗口化适配、原生窗口按钮主题同步、加载页主题与防白闪逻辑。
 
+## 运行模式方案（当前分支采用方案 B）
+
+在鸿蒙壳与上游 Web 的协作方式上，讨论过三条路线：
+
+| 方案 | 思路 | 成本 / 风险 |
+|---|---|---|
+| A：完整 Tauri 兼容桥 | 在鸿蒙壳实现 `__TAURI_INTERNALS__` / `__TAURI__`，让 `isTauriRuntime()` 为 true | 最彻底，但要覆盖大量 Tauri API，遗漏会 silent fail，维护成本高 |
+| B：显式鸿蒙桌面模式 | 注入 `window.__HARMONY_DESKTOP__ = true`，上游通过 `isHarmonyDesktopRuntime()` 识别并走鸿蒙桥 | 只按 DBX 实际能力做桥；需维护上游源码差异并重建 dist |
+| C：浏览器模式 + 零散桥 | 不统一运行模式，继续用 `dbxNativeWindow` / `dbxNativePrefs` 零散补丁 | 改动小，但桌面体验不完整、补丁脆弱，上游同步易回归 |
+
+**当前 `feat/harmony-desktop-mode` 分支采用方案 B。**
+
+实现要点：
+
+```ts
+// 鸿蒙壳 document-start 注入
+window.__HARMONY_DESKTOP__ = true;
+```
+
+```ts
+// 上游 tauriRuntime.ts / dist 中识别鸿蒙桌面模式
+isHarmonyDesktopRuntime(): boolean {
+  return !!(globalThis as ...).__HARMONY_DESKTOP__;
+}
+```
+
+- 不假装自己是 Tauri，不依赖 `__TAURI_INTERNALS__`；
+- 上游仍可按 `isDesktopRuntime()` 进入桌面模式，但桌面 API 调用点改为走 `dbxNativeWindow` / `dbxNativePrefs`；
+- 当前桥接面覆盖：窗口控制（最小化 / 最大化 / 关闭 / 拖拽）、窗口按钮主题、偏好持久化、安全区避让等；
+- 后续新增桌面能力（文件对话框、剪贴板、系统对话框等）时，按需扩展现有桥，不要引入完整 Tauri 兼容层。
+
+### 后续开发注意事项
+
+1. 同步上游 `t8y2/dbx` 后，必须保留 `tauriRuntime.ts` 中 `isHarmonyDesktopRuntime()` 的识别逻辑；
+2. 上游新增桌面 API 时，优先在 `isHarmonyDesktopRuntime()` 分支接 `dbxNativeWindow` / `dbxNativePrefs`，不要直接调用 Tauri API；
+3. 修改上游 Web 源码后，需要重新构建 `dbx-dist` 并替换 `harmony/dbxohos/entry/src/main/resources/rawfile/dbx-dist/`；
+4. Rust `.so` 与前端 `dist` 都属于 HAP 内置产物，替换后需验证 `index.html` 资源哈希变化。
+
 ## 移植说明
 
 - 上游 fork：`git@github.com:GetZ110/dbx.git`，分支 `harmonyos-port`
