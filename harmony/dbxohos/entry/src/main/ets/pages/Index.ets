@@ -43,7 +43,7 @@ private windowInjectionScript: string =
     'if(!document.getElementById("dbx-win-style")&&document.head){' +
     'var s=document.createElement("style");s.id="dbx-win-style";' +
     's.textContent=' +
-    '".app-toolbar{padding-right:144px!important;}"' +
+    '".app-toolbar{padding-right:200px!important;}"' +
     '".dbx-window-controls{display:inline-flex;align-items:center;height:100%;margin-left:2px;user-select:none;-webkit-user-select:none;flex-shrink:0;}"+' +
     '".dbx-window-controls button{width:32px;height:32px;display:inline-flex;align-items:center;justify-content:center;border:none;background:transparent;color:currentColor;border-radius:6px;cursor:default;font-size:14px;line-height:1;padding:0;margin:0 1px;}"+' +
     '".dbx-window-controls button:hover{background:rgba(128,128,128,0.15);}"+' +
@@ -299,7 +299,7 @@ private windowInjectionScript: string =
             this.windowBridge.close();
           })
       }
-      .padding({ right: 8 })
+      .padding({ right: 12 })
     }
     .width('100%')
     .height(40)
