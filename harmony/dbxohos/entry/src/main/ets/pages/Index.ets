@@ -302,9 +302,6 @@ private windowInjectionScript: string =
         }, {
           script: this.gridWheelNativeScrollScript,
           scriptRules: ['*']
-        }, {
-          script: this.gridHeaderInScrollerScript,
-          scriptRules: ['*']
         }])
         .onlineImageAccess(true)
         .fileAccess(true)
