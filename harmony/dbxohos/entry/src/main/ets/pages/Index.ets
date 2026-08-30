@@ -43,6 +43,7 @@ private windowInjectionScript: string =
     'if(!document.getElementById("dbx-win-style")&&document.head){' +
     'var s=document.createElement("style");s.id="dbx-win-style";' +
     's.textContent=' +
+    '".app-toolbar{padding-right:144px!important;}"' +
     '".dbx-window-controls{display:inline-flex;align-items:center;height:100%;margin-left:2px;user-select:none;-webkit-user-select:none;flex-shrink:0;}"+' +
     '".dbx-window-controls button{width:32px;height:32px;display:inline-flex;align-items:center;justify-content:center;border:none;background:transparent;color:currentColor;border-radius:6px;cursor:default;font-size:14px;line-height:1;padding:0;margin:0 1px;}"+' +
     '".dbx-window-controls button:hover{background:rgba(128,128,128,0.15);}"+' +
@@ -266,6 +267,46 @@ private windowInjectionScript: string =
     }
   }
 
+  @Builder
+  windowControlsBuilder(useDark: boolean) {
+    Row() {
+      Row() {
+        Button('—')
+          .width(36)
+          .height(32)
+          .backgroundColor('#00000000')
+          .fontColor(useDark ? '#FFFFFF' : '#000000')
+          .accessibilityText('最小化')
+          .onClick(() => {
+            this.windowBridge.minimize();
+          })
+        Button('□')
+          .width(36)
+          .height(32)
+          .backgroundColor('#00000000')
+          .fontColor(useDark ? '#FFFFFF' : '#000000')
+          .accessibilityText('最大化/还原')
+          .onClick(() => {
+            this.windowBridge.toggleMaximize();
+          })
+        Button('✕')
+          .width(36)
+          .height(32)
+          .backgroundColor('#00000000')
+          .fontColor(useDark ? '#FFFFFF' : '#000000')
+          .accessibilityText('关闭')
+          .onClick(() => {
+            this.windowBridge.close();
+          })
+      }
+      .padding({ right: 8 })
+    }
+    .width('100%')
+    .height(40)
+    .justifyContent(FlexAlign.End)
+    .hitTestBehavior(HitTestMode.Transparent)
+  }
+
   onReloadTokenChanged(): void {
     if (this.reloadToken > 0) {
       hilog.info(DOMAIN, TAG, 'Reloading Web after service resume, token=%{public}d', this.reloadToken);
@@ -316,6 +357,7 @@ private windowInjectionScript: string =
         .onlineImageAccess(true)
         .fileAccess(true)
         .zoomAccess(false)
+        .overlay(this.windowControlsBuilder(this.darkLoading))
         .onPageBegin(() => {
           this.loading = true;
           this.errorText = '';
