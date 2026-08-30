@@ -106,7 +106,7 @@ private windowInjectionScript: string =
   private harmonyDesktopModeScript: string =
     '(function(){' +
     'window.__HARMONY_DESKTOP__=true;' +
-    'function ensureSpacing(){try{var s=document.getElementById("dbx-hm-spacing");if(!s&&document.head){s=document.createElement("style");s.id="dbx-hm-spacing";document.head.appendChild(s);}if(s)s.textContent=".app-toolbar{padding-right:204px!important}.app-toolbar > div:last-child{margin-right:0!important}";}catch(e){}}' +
+    'function ensureSpacing(){try{var s=document.getElementById("dbx-hm-spacing");if(!s&&document.head){s=document.createElement("style");s.id="dbx-hm-spacing";document.head.appendChild(s);}if(s)s.textContent=".app-toolbar{padding-right:164px!important}.app-toolbar > div:last-child{margin-right:0!important}";}catch(e){}}' +
     'if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",ensureSpacing);else ensureSpacing();' +
     'setInterval(ensureSpacing,1000);' +
     '})();'
