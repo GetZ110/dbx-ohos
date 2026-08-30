@@ -106,6 +106,9 @@ private windowInjectionScript: string =
   private harmonyDesktopModeScript: string =
     '(function(){' +
     'window.__HARMONY_DESKTOP__=true;' +
+    'function ensureSpacing(){try{var s=document.getElementById("dbx-hm-spacing");if(!s&&document.head){s=document.createElement("style");s.id="dbx-hm-spacing";document.head.appendChild(s);}if(s)s.textContent=".app-toolbar{padding-right:280px!important}.app-toolbar > div:last-child{margin-right:0!important}";}catch(e){}}' +
+    'if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",ensureSpacing);else ensureSpacing();' +
+    'setInterval(ensureSpacing,1000);' +
     '})();'
   // Injects bottom safe-area padding so interactive web content is not covered
   // by the system navigation/three-button area. Reads the avoid height from the
@@ -274,46 +277,6 @@ private windowInjectionScript: string =
     }
   }
 
-  @Builder
-  windowControlsBuilder() {
-    Row() {
-      Row() {
-        Button('—')
-          .width(36)
-          .height(32)
-          .backgroundColor('#00000000')
-          .fontColor(this.darkLoading ? '#c8c8cc' : '#666666')
-          .accessibilityText('最小化')
-          .onClick(() => {
-            this.windowBridge.minimize();
-          })
-        Button('□')
-          .width(36)
-          .height(32)
-          .backgroundColor('#00000000')
-          .fontColor(this.darkLoading ? '#c8c8cc' : '#666666')
-          .accessibilityText('最大化/还原')
-          .onClick(() => {
-            this.windowBridge.toggleMaximize();
-          })
-        Button('✕')
-          .width(36)
-          .height(32)
-          .backgroundColor('#00000000')
-          .fontColor('#E5484D')
-          .accessibilityText('关闭')
-          .onClick(() => {
-            this.windowBridge.close();
-          })
-      }
-      .padding({ right: 12 })
-    }
-    .width('100%')
-    .height(40)
-    .justifyContent(FlexAlign.End)
-    .hitTestBehavior(HitTestMode.Transparent)
-  }
-
   onReloadTokenChanged(): void {
     if (this.reloadToken > 0) {
       hilog.info(DOMAIN, TAG, 'Reloading Web after service resume, token=%{public}d', this.reloadToken);
@@ -364,7 +327,6 @@ private windowInjectionScript: string =
         .onlineImageAccess(true)
         .fileAccess(true)
         .zoomAccess(false)
-        .overlay(this.windowControlsBuilder())
         .onPageBegin(() => {
           this.loading = true;
           this.errorText = '';
