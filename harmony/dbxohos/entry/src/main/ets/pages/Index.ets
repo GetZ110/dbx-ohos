@@ -287,8 +287,8 @@ private windowInjectionScript: string =
       Button('—')
         .width(36)
         .height(32)
-        .backgroundColor('#00000000')
-        .fontColor(this.darkLoading ? '#c8c8cc' : '#666666')
+        .backgroundColor('#66000000')
+        .fontColor('#FFFFFF')
         .accessibilityText('最小化')
         .onClick(() => {
           this.windowBridge.minimize();
@@ -296,8 +296,8 @@ private windowInjectionScript: string =
       Button('□')
         .width(36)
         .height(32)
-        .backgroundColor('#00000000')
-        .fontColor(this.darkLoading ? '#c8c8cc' : '#666666')
+        .backgroundColor('#66000000')
+        .fontColor('#FFFFFF')
         .accessibilityText('最大化/还原')
         .onClick(() => {
           this.windowBridge.toggleMaximize();
@@ -305,8 +305,8 @@ private windowInjectionScript: string =
       Button('✕')
         .width(36)
         .height(32)
-        .backgroundColor('#00000000')
-        .fontColor('#E5484D')
+        .backgroundColor('#66000000')
+        .fontColor('#FFFFFF')
         .accessibilityText('关闭')
         .onClick(() => {
           this.windowBridge.close();
