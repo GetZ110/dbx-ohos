@@ -55,7 +55,7 @@ private windowInjectionScript: string =
     'addStyle();' +
     'var bar=document.querySelector(".app-toolbar");' +
     'if(!bar||document.getElementById("dbx-window-controls"))return;' +
-    'var harmonyDesktop=!!window.__TAURI_INTERNALS__;' +
+    'var harmonyDesktop=!!(window.__HARMONY_DESKTOP__||window.__TAURI_INTERNALS__);' +
     'if(!document.getElementById("dbx-window-controls")&&!harmonyDesktop){' +
     'var wrap=document.createElement("div");' +
     'wrap.id="dbx-window-controls";' +
