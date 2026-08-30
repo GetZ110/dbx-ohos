@@ -84,7 +84,7 @@ private windowInjectionScript: string =
   private harmonyDesktopModeScript: string =
     '(function(){' +
     'window.__HARMONY_DESKTOP__=true;' +
-    'function syncDark(){try{var b=window.dbxNativePrefs;if(b&&b.setDarkMode&&document.documentElement)b.setDarkMode(document.documentElement.classList.contains("dark"));}catch(e){}}' +
+    'function syncDark(){try{var dark=!!(document.documentElement&&document.documentElement.classList.contains("dark"));var b=window.dbxNativePrefs;console.log("DBX_THEME_SYNC",dark,"prefs",!!b,"method",!!(b&&b.setDarkMode));if(b&&b.setDarkMode)b.setDarkMode(dark);}catch(e){console.log("DBX_THEME_SYNC_ERR",String(e));}}' +
     'if(window.__dbxDarkTimer)clearInterval(window.__dbxDarkTimer);' +
     'window.__dbxDarkTimer=setInterval(syncDark,500);' +
     '})();'
@@ -223,8 +223,15 @@ private windowInjectionScript: string =
     const savedTheme: string = ThemePrefs.getPref('dbx-theme');
     this.darkLoading = savedTheme === 'dark';
     this.themeWatchTimer = setInterval(() => {
-      const current: string = ThemePrefs.getPref('dbx-theme');
-      this.darkLoading = current === 'dark';
+      this.controller.runJavaScript("document.documentElement.classList.contains('dark')")
+        .then((v: string) => {
+          const next = v === 'true';
+          if (next !== this.darkLoading) {
+            this.darkLoading = next;
+            hilog.info(DOMAIN, TAG, 'dark mode changed via poll: %{public}s', next ? 'dark' : 'light');
+          }
+        }).catch((e: Error) => {
+        });
     }, 500);
     hilog.info(DOMAIN, TAG, 'Index about to appear, webSrc=%{public}s, savedTheme=%{public}s',
       this.webSrc, savedTheme.length > 0 ? savedTheme : '(unset)');
@@ -261,13 +268,13 @@ private windowInjectionScript: string =
   }
 
   @Builder
-  windowControlsBuilder() {
+  windowControlsBuilder(useDark: boolean) {
     Row() {
       Button('—')
         .width(36)
         .height(32)
         .backgroundColor('#00000000')
-        .fontColor(this.darkLoading ? '#FFFFFF' : '#000000')
+        .fontColor(useDark ? '#FFFFFF' : '#000000')
         .accessibilityText('最小化')
         .onClick(() => {
           this.windowBridge.minimize();
@@ -276,7 +283,7 @@ private windowInjectionScript: string =
         .width(36)
         .height(32)
         .backgroundColor('#00000000')
-        .fontColor(this.darkLoading ? '#FFFFFF' : '#000000')
+        .fontColor(useDark ? '#FFFFFF' : '#000000')
         .accessibilityText('最大化/还原')
         .onClick(() => {
           this.windowBridge.toggleMaximize();
@@ -285,7 +292,7 @@ private windowInjectionScript: string =
         .width(36)
         .height(32)
         .backgroundColor('#00000000')
-        .fontColor(this.darkLoading ? '#FFFFFF' : '#000000')
+        .fontColor(useDark ? '#FFFFFF' : '#000000')
         .accessibilityText('关闭')
         .onClick(() => {
           this.windowBridge.close();
@@ -344,7 +351,7 @@ private windowInjectionScript: string =
         .onlineImageAccess(true)
         .fileAccess(true)
         .zoomAccess(false)
-        .overlay(this.windowControlsBuilder(), { align: Alignment.TopEnd })
+        .overlay(this.windowControlsBuilder(this.darkLoading), { align: Alignment.TopEnd })
         .onPageBegin(() => {
           this.loading = true;
           this.errorText = '';
@@ -354,6 +361,12 @@ private windowInjectionScript: string =
           this.loading = false;
           this.errorText = '';
           this.clearLoadingTimeout();
+          this.controller.runJavaScript("typeof window.dbxNativePrefs + '@' + (window.dbxNativePrefs ? typeof window.dbxNativePrefs.setDarkMode : 'none')")
+            .then((v: string) => {
+              hilog.info(DOMAIN, TAG, 'proxy-probe=%{public}s', v);
+            }).catch((e: Error) => {
+              hilog.warn(DOMAIN, TAG, 'proxy-probe-error=%{public}s', e.message);
+            });
           const hsync0: string = ThemePrefs.getPref('dbx-diag-hsync');
           hilog.info(DOMAIN, TAG, 'hsync-probe-0=%{public}s', hsync0.length > 0 ? hsync0 : '(empty)');
           this.controller.runJavaScript(
