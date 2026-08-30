@@ -55,6 +55,8 @@ private windowInjectionScript: string =
     'addStyle();' +
     'var bar=document.querySelector(".app-toolbar");' +
     'if(!bar||document.getElementById("dbx-window-controls"))return;' +
+    'var harmonyDesktop=!!(window.__HARMONY_DESKTOP__||window.__TAURI_INTERNALS__);' +
+    'if(!document.getElementById("dbx-window-controls")&&!harmonyDesktop){' +
     'var wrap=document.createElement("div");' +
     'wrap.id="dbx-window-controls";' +
     'wrap.className="dbx-window-controls";' +
@@ -75,6 +77,7 @@ private windowInjectionScript: string =
     'var act=t.getAttribute("data-win");var w=window.dbxNativeWindow;if(!w)return;' +
     'if(act==="min")w.minimize();else if(act==="max"){var now=Date.now();if(now-lastMaxToggle<300)return;lastMaxToggle=now;w.toggleMaximize();var mb=wrap.querySelector("button[data-win=\\"max\\"]");if(mb)mb.innerHTML=(w.isMaximized&&w.isMaximized())?restoreIcon:maxIcon;}else if(act==="close")w.close();' +
     '});' +
+    '}' +
     'function isDragTarget(t){if(!t||!t.closest)return false;return !t.closest(\".dbx-window-controls,button,a,input,select,textarea,[contenteditable=\\\"true\\\"],[role=\\\"button\\\"]\");}' +
     'bar.addEventListener("pointerdown",function(e){' +
     'if(e.pointerType==="mouse"&&e.button!==0)return;var t=e.target;' +
@@ -92,6 +95,45 @@ private windowInjectionScript: string =
     '}' +
     'if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",inject);else inject();' +
     'if(window.MutationObserver){var mo=new MutationObserver(inject);mo.observe(document.documentElement,{childList:true,subtree:true});}' +
+    '})();'
+  // Unified runtime mode (Plan B): mark the page as a HarmonyOS desktop-like
+  // runtime and provide a minimal __TAURI_INTERNALS__ bridge for the Tauri
+  // window APIs DBX actually uses. Without this, the web frontend treats the
+  // app as a plain browser and disables desktop window/file/zoom features.
+  private harmonyDesktopModeScript: string =
+    '(function(){' +
+    'if(window.__HARMONY_DESKTOP__)return;' +
+    'window.__HARMONY_DESKTOP__=true;' +
+    'var native=window.dbxNativeWindow||{};' +
+    'var callbacks={};var nextCallbackId=1;' +
+    'function transformCallback(cb){var id=nextCallbackId++;callbacks[id]=cb;return id;}' +
+    'function unregisterCallback(id){delete callbacks[id];}' +
+    'function invoke(cmd){' +
+    'return new Promise(function(resolve,reject){' +
+    'try{' +
+    'if(cmd==="plugin:window|is_maximized"){resolve(!!(native.isMaximized&&native.isMaximized()));return;}' +
+    'if(cmd==="plugin:window|is_minimized"||cmd==="plugin:window|is_fullscreen"||cmd==="plugin:window|is_decorated"){resolve(false);return;}' +
+    'if(cmd==="plugin:window|is_resizable"||cmd==="plugin:window|is_maximizable"||cmd==="plugin:window|is_minimizable"||cmd==="plugin:window|is_closable"||cmd==="plugin:window|is_visible"){resolve(true);return;}' +
+    'if(cmd==="plugin:window|minimize"){native.minimize&&native.minimize();resolve();return;}' +
+    'if(cmd==="plugin:window|toggle_maximize"||cmd==="plugin:window|maximize"||cmd==="plugin:window|unmaximize"){native.toggleMaximize&&native.toggleMaximize();resolve();return;}' +
+    'if(cmd==="plugin:window|close"){native.close&&native.close();resolve();return;}' +
+    'if(cmd==="plugin:window|start_dragging"){native.startMove&&native.startMove();resolve();return;}' +
+    'if(cmd==="plugin:window|set_theme"||cmd==="plugin:window|set_title"||cmd==="plugin:window|set_size"||cmd==="plugin:window|set_position"||cmd==="plugin:window|center"){resolve();return;}' +
+    'if(cmd==="plugin:window|theme"){resolve("light");return;}' +
+    'if(cmd==="plugin:event|listen"||cmd==="plugin:window|on_resized"){resolve(function(){});return;}' +
+    'if(cmd==="plugin:resources|close"){resolve();return;}' +
+    'reject(new Error("Harmony bridge: unsupported command "+cmd));' +
+    '}catch(e){reject(e);}' +
+    '});' +
+    '}' +
+    'window.__TAURI_INTERNALS__={' +
+    'metadata:{currentWindow:{label:"main"},currentWebview:{label:"main"}},' +
+    'invoke:invoke,' +
+    'transformCallback:transformCallback,' +
+    'unregisterCallback:unregisterCallback' +
+    '};' +
+    'window.__TAURI_EVENT_PLUGIN_INTERNALS__={unregisterListener:function(){return Promise.resolve();}};' +
+    'window.__TAURI__={};' +
     '})();'
   // Injects bottom safe-area padding so interactive web content is not covered
   // by the system navigation/three-button area. Reads the avoid height from the
@@ -277,6 +319,9 @@ private windowInjectionScript: string =
           controller: this.controller
         })
         .javaScriptOnDocumentStart([{
+          script: this.harmonyDesktopModeScript,
+          scriptRules: ['*']
+        }, {
           script: this.prefsRestoreScript,
           scriptRules: ['*']
         }, {
