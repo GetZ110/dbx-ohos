@@ -1,0 +1,1 @@
+import{t as e}from"./createLucideIcon-CoGXB0Y6.js";var t=e(`asterisk`,[[`path`,{d:`M12 6v12`,key:`1vza4d`}],[`path`,{d:`M17.196 9 6.804 15`,key:`1ah31z`}],[`path`,{d:`m6.804 9 10.392 6`,key:`1b6pxd`}]]);export{t};

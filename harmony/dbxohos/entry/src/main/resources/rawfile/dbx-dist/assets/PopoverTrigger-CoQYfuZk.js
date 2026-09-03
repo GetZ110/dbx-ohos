@@ -1,0 +1,1 @@
+import{$t as e,It as t,K as n,Mn as r,Ot as i,Wt as a,nn as o,pn as s}from"./ui-sIP1Mgc-.js";var c=t({__name:`PopoverTrigger`,props:{asChild:{type:Boolean},as:{}},setup(t){let c=t;return(t,l)=>(e(),i(r(n),a({"data-slot":`popover-trigger`},c),{default:s(()=>[o(t.$slots,`default`)]),_:3},16))}});export{c as t};

@@ -1,0 +1,1 @@
+import{$t as e,It as t,Mn as n,Ot as r,Wt as i,Y as a,nn as o,pn as s}from"./ui-sIP1Mgc-.js";var c=t({__name:`PopoverAnchor`,props:{reference:{},asChild:{type:Boolean},as:{}},setup(t){let c=t;return(t,l)=>(e(),r(n(a),i({"data-slot":`popover-anchor`},c),{default:s(()=>[o(t.$slots,`default`)]),_:3},16))}});export{c as t};
