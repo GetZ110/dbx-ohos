@@ -75,7 +75,7 @@ export default class EntryAbility extends UIAbility {
       this.mainWindow = mainWindow;
       WindowBridge.init(mainWindow, () => {
         this.handleWindowClose();
-      });
+      }, this.context as common.UIAbilityContext);
       const ctx = this.context as common.UIAbilityContext;
       const config = ctx.resourceManager.getConfigurationSync();
       if (config.colorMode !== undefined) {

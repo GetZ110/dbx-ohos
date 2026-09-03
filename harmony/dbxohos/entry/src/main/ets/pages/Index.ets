@@ -360,7 +360,7 @@ private windowInjectionScript: string =
         .javaScriptProxy({
           object: this.windowBridge,
           name: 'dbxNativeWindow',
-          methodList: ['minimize', 'toggleMaximize', 'close', 'startMove', 'isMaximized', 'getBottomNavHeight', 'getTitleButtonReserveWidth', 'setDarkMode', 'setThemeModeFromWeb'],
+          methodList: ['minimize', 'toggleMaximize', 'close', 'startMove', 'isMaximized', 'getBottomNavHeight', 'getTitleButtonReserveWidth', 'setDarkMode', 'setThemeModeFromWeb', 'openExternal'],
           controller: this.controller
         })
         .javaScriptOnDocumentStart([{

@@ -1,7 +1,7 @@
 import { window } from '@kit.ArkUI';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { BusinessError } from '@kit.BasicServicesKit';
-import { ConfigurationConstant } from '@kit.AbilityKit';
+import { ConfigurationConstant, common } from '@kit.AbilityKit';
 import { ThemePrefs } from './ThemePrefs';
 
 const DOMAIN = 0xDB8;
@@ -18,6 +18,7 @@ const TAG = 'DBX_WINDOW';
 export class WindowBridge {
   private static mainWindow: window.Window | null = null;
   private static closeHandler: (() => void) | null = null;
+  private static appContext: common.UIAbilityContext | null = null;
   private static maximized: boolean = false;
   private static statusListenerBound: boolean = false;
   private static avoidListenerBound: boolean = false;
@@ -35,9 +36,10 @@ export class WindowBridge {
   /**
    * Called from EntryAbility once the main window is available.
    */
-  static init(mainWindow: window.Window, closeHandler: () => void): void {
+  static init(mainWindow: window.Window, closeHandler: () => void, appContext?: common.UIAbilityContext): void {
     WindowBridge.mainWindow = mainWindow;
     WindowBridge.closeHandler = closeHandler;
+    WindowBridge.appContext = appContext ?? null;
     WindowBridge.maximized = false;
     WindowBridge.lastDarkMode = null;
     WindowBridge.refreshBottomNavHeight(mainWindow);
@@ -190,6 +192,29 @@ export class WindowBridge {
     win.startMoving().catch((err: BusinessError) => {
       hilog.warn(DOMAIN, TAG, 'startMoving failed: %{public}s', err.message);
     });
+  }
+
+  /**
+   * Open an external URL in the system default browser. HarmonyOS HAP cannot
+   * install/custom-install downloads from inside the WebView, so links that must
+   * leave the app are handed to the OS browser.
+   */
+  openExternal(url: string): void {
+    const context = WindowBridge.appContext;
+    if (!context) {
+      hilog.warn(DOMAIN, TAG, 'openExternal ignored: app context unavailable');
+      return;
+    }
+    try {
+      context.openLink(url).then(() => {
+        hilog.info(DOMAIN, TAG, 'openExternal succeeded: %{public}s', url);
+      }).catch((err: BusinessError) => {
+        hilog.warn(DOMAIN, TAG, 'openExternal failed: %{public}s', JSON.stringify(err));
+      });
+    } catch (err) {
+      const e = err as BusinessError;
+      hilog.warn(DOMAIN, TAG, 'openExternal threw: %{public}s', e.message);
+    }
   }
 
   /**
