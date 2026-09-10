@@ -229,6 +229,18 @@ cp target/release/libdbx_ohos.so ../../harmony/dbxohos/entry/libs/arm64-v8a/libd
   反向对比（lib.rs 独有）应只剩 harmony 特有路由：`/mq/*`、`/health`、`/mcp`、`/api/query/extract-data-grid-selection`——这些**不要删**。
 - **② `dbx-core/Cargo.toml` 大概率冲突**：保留 OHOS 定制（`rusqlite` 带 `bundled`、`mysql_async` 用 `default-rustls-ring`、`rustls`/`russh` 用 `ring`）；上游新增依赖要保留（如 `libsqlite3-hotbundle` 及其 `sqlite-multiple-ciphers` feature），它们是桌面端 `src-tauri` 用的，删了会让桌面 feature 悬空。
 - **③ 版本号**：上游 `src-tauri` / `dbx-web` / `dbx-mcp` 版本号随之上移（如 0.5.93→0.5.96），确认 `Cargo.lock` 与 `Cargo.toml` 一致（`cargo metadata` 可快速验证解析）。
+- **④ 上游新增桌面功能必须同时判 `isTauriRuntime()`（每次同步必查）**：鸿蒙运行时是「类桌面但非 Tauri」——注入 `__HARMONY_DESKTOP__` 使 `isDesktopRuntime()` 为 true，但**刻意不注入** `__TAURI_INTERNALS__`（否则 `api.ts` 会切到 Tauri 后端）。因此上游任何只判 `isDesktopRuntime()` 就调 `@tauri-apps/*` 的新代码，在 OHOS 上都会抛：
+  - `getCurrentWebviewWindow()` / `getCurrentWindow()` → `Cannot read properties of undefined (reading 'metadata')`
+  - `listen()` / `emit()` → `Cannot read properties of undefined (reading 'transformCallback')`
+
+  这类异常若发生在 `App.vue` 启动的 try/catch 里，会被错误地报成 **「加载已保存连接失败：…」**（与连接无关，极易误判）。排查方式：`hdc hilog | grep -E "unhandled rejection|Cannot read properties of undefined"`，正常启动应为 0 条。
+
+  已加守卫的位置（合并后若被上游覆盖需重加）：`App.vue` 的 `initializeUpdatePreparation()` / `setupDetachedWindowEvents()`、`composables/useTauriEvents.ts` 的 `setupTauriListeners()`。**每次同步后建议全局扫一遍**：
+
+  ```bash
+  # 找出「只判 isDesktop / isDesktopRuntime 却触碰 @tauri-apps」的新代码
+  grep -rn "isDesktop" apps/desktop/src --include=*.vue --include=*.ts | grep -v isTauriRuntime
+  ```
 
 ## 验证方式
 
