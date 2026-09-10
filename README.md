@@ -3,18 +3,21 @@
 DBX 数据库客户端在 HarmonyOS 上的移植工程。
 
 - 上游项目：[https://github.com/t8y2/dbx](https://github.com/t8y2/dbx)
-- 本仓库 fork：`git@github.com:GetZ110/dbx.git`（分支 `harmonyos-port`）
+- 本工程仓库：`git@github.com:GetZ110/dbx-ohos.git`（开发分支：`main`）
+- 上游 fork（submodule）：`git@github.com:GetZ110/dbx.git`（移植分支：`harmonyos-port`）
 
 ## 仓库结构
 
 ```
-dbx-ohos/
+dbx-ohos/                     # 父仓库，只有 main 一个分支，直接在 main 上开发
 ├── upstream/
 │   └── dbx/            # 上游 dbx 源码（submodule，指向 harmonyos-port 分支）
 ├── harmony/
 │   └── dbxohos/        # HarmonyOS HAP 工程（ArkTS Web + Rust NAPI .so）
 └── README.md
 ```
+
+> 分支说明：父仓库只需要 `main`（桌面模式分支 `feat/harmony-desktop-mode` 已合并进 `main` 并删除）；submodule 侧固定使用 `harmonyos-port`。
 
 ## 快速开始
 
@@ -59,21 +62,20 @@ cp target/release/libdbx_ohos.so \
 - [x] 加载页/启动主题：读取软件设置主题，`system` 模式跟随系统真实亮暗
 - [x] Web 组件 `darkMode(Auto)`：`prefers-color-scheme` 跟随系统
 - [x] 加载页防白闪：首次内容绘制（`onFirstContentfulPaint`）后再隐藏加载层
+- [x] 系统任务栏/Dock 颜色结论：窗口外的系统任务栏/Dock 属系统级外观，应用侧无法控制（`setColorMode` / `setWindowSystemBarProperties` 只能影响应用窗口自身的状态栏与导航栏区域）。已确认为平台行为，不再作为待办
 
 ## 待办
 
 - [ ] P2：PC/平板 UX 优化（触摸适配、原生侧边栏、按窗口类型布局）
 - [ ] P2：查询表格 **Canvas 渲染模式流畅度优化**（当前 Canvas 自绘网格为每帧全量重绘：可见格 × `fillText` + `measureText`，且背板 = `dpr² × uiScale`，大数据量滚动在 ArkWeb 上一帧画不完导致丢帧。计划改增量绘制：行块纹理离屏缓存 + 平移贴图 + DPR 降级；优化落地前，UI 已支持「视图选项 → 渲染模式切 DOM」作为流畅兜底）
-- [ ] 待研究：系统全局任务栏/Dock 颜色随应用主题（当前应用侧无法控制，最大化后 Dock 仍为系统色）
 - [ ] P3：沙箱数据备份/导出/导入、连接加密确认、云同步验证
-- [ ] P4：DevEco 签名配置、签名 HAP/APP 发布
 - [ ] P5：原生 ArkUI 替换连接管理 / SQL 编辑器（长期）
 - [ ] P6：构建脚本、patch 文档、ohosTest 单元测试
 - [ ] 可选：MCP 拆分到独立端口（当前与 Web 共用 `4224/mcp`）
 
-## 当前分支方案（PC / 2in1）
+## 桌面窗口方案（PC / 2in1）
 
-当前 `feat/harmony-desktop-mode` 分支采用“沉浸式 + Web 工具栏作为标题栏”的方案：
+当前主线采用“沉浸式 + Web 工具栏作为标题栏”的方案：
 
 - `EntryAbility` 隐藏系统标题栏，进入全屏沉浸布局；
 - 保留系统原生窗口按钮（最小化 / 最大化 / 关闭），并让按钮颜色随应用/系统主题切换；
@@ -86,9 +88,7 @@ cp target/release/libdbx_ohos.so \
 - 加载页读取软件设置主题；`system` 模式时读取系统真实亮暗；Web 使用 `darkMode(Auto)` 让 `prefers-color-scheme` 跟随系统；
 - 加载页在 `onFirstContentfulPaint` 后再隐藏，避免 ArkWeb 白色首帧闪烁。
 
-> 与 `main` 分支相比，本分支主要差异集中在 2in1 窗口化适配、原生窗口按钮主题同步、加载页主题与防白闪逻辑。
-
-## 运行模式方案（当前分支采用方案 B）
+## 运行模式方案（采用方案 B）
 
 在鸿蒙壳与上游 Web 的协作方式上，讨论过三条路线：
 
@@ -98,7 +98,7 @@ cp target/release/libdbx_ohos.so \
 | B：显式鸿蒙桌面模式 | 注入 `window.__HARMONY_DESKTOP__ = true`，上游通过 `isHarmonyDesktopRuntime()` 识别并走鸿蒙桥 | 只按 DBX 实际能力做桥；需维护上游源码差异并重建 dist |
 | C：浏览器模式 + 零散桥 | 不统一运行模式，继续用 `dbxNativeWindow` / `dbxNativePrefs` 零散补丁 | 改动小，但桌面体验不完整、补丁脆弱，上游同步易回归 |
 
-**当前 `feat/harmony-desktop-mode` 分支采用方案 B。**
+**当前主线采用方案 B。**
 
 实现要点：
 
@@ -128,7 +128,7 @@ isHarmonyDesktopRuntime(): boolean {
 
 ## 移植说明
 
-- 上游 fork：`git@github.com:GetZ110/dbx.git`，分支 `harmonyos-port`
+- 子模块 fork：`git@github.com:GetZ110/dbx.git`，移植分支 `harmonyos-port`
 - Rust 侧新增 `crates/dbx-ohos`（NAPI 导出 `startServer` / `stopServer` / MCP）
 - `dbx-web` 新增 `/api/health` 就绪路由，并复用 `AppState` 避免二次打开 SQLite
 - 鸿蒙壳使用 ArkWeb 加载本地 `dbx-web` 服务；主题/外观偏好通过原生 Preferences 持久化

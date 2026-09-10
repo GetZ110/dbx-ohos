@@ -21,3 +21,7 @@ local.properties
 # HarmonyOS build artifacts & dependencies
 node_modules/
 release/
+
+# Local AI/agent tooling state (machine-specific, not part of the project)
+.arts/
+.workbuddy/

@@ -9,7 +9,7 @@
 ## 仓库结构
 
 ```
-dbx-ohos/
+dbx-ohos/                     # 父仓库，只有 main 一个分支，直接在 main 上开发
 ├── upstream/
 │   └── dbx/            # git submodule → GetZ110/dbx 的 harmonyos-port 分支（上游 t8y2/dbx 的 fork）
 ├── harmony/
@@ -17,6 +17,8 @@ dbx-ohos/
 ├── AGENTS.md           # 本文件
 └── README.md
 ```
+
+> 分支约定：父仓库 `main` 为唯一开发分支（原 `feat/harmony-desktop-mode` 桌面模式分支已合并进来并删除）；submodule 侧固定用 `harmonyos-port`。
 
 ## 关键架构
 
@@ -98,6 +100,7 @@ cp target/release/libdbx_ohos.so \
 - 同步上游 v0.6.9（382 commits，1123 文件；冲突 2 处 + lib.rs 回填 1 条上游路由 `/app-settings/sql-file-upload-max-bytes`）
 - HAP 产物重建流程落地：前端 dist 走 fork CI（GetZ110/dbx Actions 从合并后源码构建，勿用 Release 包——其落后 main 几十个提交）、Rust `.so` 本地 OHOS release 构建，已写入「同步上游」章节
 - JRE 解压适配：`extract_jre_tar` 改为逐条目解包并跳过 symlink（沙箱创建符号链接返回 EPERM；JRE 包仅 `legal/` 下有链接）
+- 系统任务栏/Dock 颜色：**结论为应用侧不可控**（属系统级外观）。`setColorMode` / `setWindowSystemBarProperties` 只能影响应用窗口自身的状态栏与导航栏区域，窗口外的系统 Dock 最大化后仍为系统色。不再作为待办
 
 ## 下一步任务
 
@@ -107,9 +110,7 @@ cp target/release/libdbx_ohos.so \
   - 按窗口类型（tablet / 2in1）做布局
   - 启动加载页跟随已保存的明暗主题
 - P2：查询表格 **Canvas 渲染模式流畅度优化**（上游 `DataGrid.vue` canvas 模式每帧全量重绘导致 ArkWeb 上大数据量滚动丢帧；计划改为行块纹理缓存 + 增量绘制 + DPR 降级。落地前靠「视图选项 → 渲染模式切 DOM」兜底，该提示已写入 v1.1.0 release notes）
-- 待研究：系统全局任务栏/Dock 颜色无法由应用侧控制（已试 setColorMode / setWindowSystemBarProperties，最大化后 Dock 仍为系统色，记录待后续处理）
 - P3：沙箱数据备份/导出/导入、连接加密确认、云同步验证
-- P4：DevEco 签名配置、签名 HAP/APP 发布
 - P5：原生 ArkUI 替换连接管理 / SQL 编辑器（长期）
 - P6：构建脚本、patch 文档、ohosTest 单元测试
 - 可选：MCP 拆分到独立端口
