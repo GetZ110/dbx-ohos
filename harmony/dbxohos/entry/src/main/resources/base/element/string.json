@@ -11,6 +11,10 @@
     {
       "name": "EntryAbility_label",
       "value": "DBX"
+    },
+    {
+      "name": "reason_read_write_documents_directory",
+      "value": "用于打开 Documents 目录下的 SQLite 数据库文件"
     }
   ]
 }
