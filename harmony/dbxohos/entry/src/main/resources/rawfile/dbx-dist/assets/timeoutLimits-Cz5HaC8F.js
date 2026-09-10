@@ -1,0 +1,1 @@
+var e=3600;function t(e){return typeof e!=`number`||!Number.isFinite(e)?10:Math.min(300,Math.max(1,Math.round(e)))}function n(t){return typeof t!=`number`||!Number.isFinite(t)?60:Math.min(e,Math.max(0,Math.round(t)))}export{t as n,n as r,e as t};

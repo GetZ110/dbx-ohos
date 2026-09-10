@@ -1,0 +1,1 @@
+import{Ft as e,Mn as t,Nn as n,Qt as r,kt as i,tn as a}from"./ui-BgPTGDys.js";import{t as o}from"./utils-DR6GLumw.js";var s=e({__name:`DialogHeader`,props:{class:{type:[Boolean,null,String,Object,Array]}},setup(e){let s=e;return(e,c)=>(r(),i(`div`,{"data-slot":`dialog-header`,class:n(t(o)(`gap-2 flex flex-col`,s.class))},[a(e.$slots,`default`)],2))}});export{s as t};

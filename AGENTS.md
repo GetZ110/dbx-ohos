@@ -94,7 +94,10 @@ cp target/release/libdbx_ohos.so \
 - 底部导航区避让：`WindowBridge` 用 `getWindowAvoidArea(TYPE_NAVIGATION_INDICATOR)` + `on('avoidAreaChange')` 维护高度，`Index.ets` 注入 `windowSafeAreaScript` 每 500ms 读取 `getBottomNavHeight()` 并给 `<body>` 加 padding-bottom（2in1 上该值为 0，无副作用）
 - 仓库已按 submodule 结构托管到 GitHub
 - 同步上游 v0.5.98（95 commits，冲突 1 处 + lib.rs 回填 5 条上游路由）
+- 同步上游 v0.6.2（冲突 1 处）
+- 同步上游 v0.6.9（382 commits，1123 文件；冲突 2 处 + lib.rs 回填 1 条上游路由 `/app-settings/sql-file-upload-max-bytes`）
 - HAP 产物重建流程落地：前端 dist 走 fork CI（GetZ110/dbx Actions 从合并后源码构建，勿用 Release 包——其落后 main 几十个提交）、Rust `.so` 本地 OHOS release 构建，已写入「同步上游」章节
+- JRE 解压适配：`extract_jre_tar` 改为逐条目解包并跳过 symlink（沙箱创建符号链接返回 EPERM；JRE 包仅 `legal/` 下有链接）
 
 ## 下一步任务
 
@@ -125,7 +128,7 @@ cp target/release/libdbx_ohos.so \
 - **主题持久化**：ArkWeb localStorage 跨完全退出可能不落盘；当前方案是 JS 注入把 `dbx-*` 写入原生 Preferences，启动前再恢复进 localStorage。
 - **健康检查**：原生 `dbx-web` 必须有 `/api/health`；否则 `ServerHealthChecker` 会空等 10 秒。
 - **MCP 启动**：不要用 `LocalBackend::open()` 再开一次 SQLite，应复用已打开的 `AppState`。
-- **发版约定（release 只挂未签名包）**：签名 HAP 含 debug profile（绑定设备 UDID），不可公开发布；每次发 release 前，先把 `AppScope/app.json5` 的 `versionName`/`versionCode` 升到与 release 版本一致（当前基线：1.2.0 ↔ 1002000），再构建并替换 release 资产，保证未签名 hap 的包内版本与 release tag 对齐（本次 2026-08-28 已按此流程替换 v1.2.0 资产）。
+- **发版约定（release 只挂未签名包）**：签名 HAP 含 debug profile（绑定设备 UDID），不可公开发布；每次发 release 前，先把 `AppScope/app.json5` 的 `versionName`/`versionCode` 升到与 release 版本一致（当前基线：1.3.1 ↔ 1003001），再构建并替换 release 资产，保证未签名 hap 的包内版本与 release tag 对齐（2026-08-28 与 2026-09-10 均按此流程替换 release 资产）。
 
 ## 同步上游（t8y2/dbx main → harmonyos-port）
 
@@ -178,12 +181,17 @@ git -C upstream/dbx add .github/workflows/build-web-dist.yml
 git -C upstream/dbx commit --no-verify -m "ci: temp workflow to build web dist"
 git -C upstream/dbx push origin ci/build-web-dist
 
-# b) 等 run 完成后取 artifact（gh run download 可能静默失败，改用 gh api 直拉 zip）
+# b) 等 run 完成后取 artifact。注意本机拉 artifact 经常中途断流（HTTP/2 unexpected EOF），
+#    且 /tmp 已满（curl -o /tmp/... 会报 "client returned ERROR on write"）——务必落到工作区内、带 -C - 断点续传重试：
 RUN_ID=$(gh run list --repo GetZ110/dbx --workflow build-web-dist.yml --limit 1 --json databaseId --jq '.[0].databaseId')
 AID=$(gh api "repos/GetZ110/dbx/actions/runs/$RUN_ID/artifacts" --jq '.artifacts[0].id')
 TOK=$(gh auth token)
-gh api -H "Authorization: Bearer $TOK" -H "Accept: application/vnd.github+json" \
-  "repos/GetZ110/dbx/actions/artifacts/$AID/zip" > dist.zip   # 注意：给足超时，5MB 左右
+# 先取签名跳转 URL（Range 可用，故可续传），再循环 curl -C - 直到字节数与 size_in_bytes 相等
+SIGNED=$(curl -sS -o /dev/null -w '%{redirect_url}' -H "Authorization: Bearer $TOK" \
+  -H "Accept: application/vnd.github+json" "https://api.github.com/repos/GetZ110/dbx/actions/artifacts/$AID/zip")
+for i in $(seq 1 60); do timeout 90 curl -sS -C - -o target/dist.zip "$SIGNED"; \
+  [ "$(stat -c%s target/dist.zip)" -ge "$(gh api repos/GetZ110/dbx/actions/artifacts/$AID --jq .size_in_bytes)" ] && break; done
+unzip -t target/dist.zip   # 必须校验完整性
 
 # c) 解包替换；替换前顶层文件结构应与旧 dist 一致（assets/ index.html fonts/ icons/ 等）
 unzip -q dist.zip -d web-dist

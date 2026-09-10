@@ -1,0 +1,1 @@
+import{Dt as e,Ft as t,Mn as n,Qt as r,Ut as i,Y as a,pn as o,tn as s}from"./ui-BgPTGDys.js";var c=t({__name:`PopoverAnchor`,props:{reference:{},asChild:{type:Boolean},as:{}},setup(t){let c=t;return(t,l)=>(r(),e(n(a),i({"data-slot":`popover-anchor`},c),{default:o(()=>[s(t.$slots,`default`)]),_:3},16))}});export{c as t};

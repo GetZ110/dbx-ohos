@@ -1,0 +1,1 @@
+import{Dt as e,Ft as t,K as n,Mn as r,Qt as i,Ut as a,pn as o,tn as s}from"./ui-BgPTGDys.js";var c=t({__name:`PopoverTrigger`,props:{asChild:{type:Boolean},as:{}},setup(t){let c=t;return(t,l)=>(i(),e(r(n),a({"data-slot":`popover-trigger`},c),{default:o(()=>[s(t.$slots,`default`)]),_:3},16))}});export{c as t};

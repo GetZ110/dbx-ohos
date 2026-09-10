@@ -1,0 +1,1 @@
+import{Yt as e,wn as t}from"./ui-BgPTGDys.js";import{t as n}from"./useTheme-SiFtjlv_.js";import{n as r,t as i}from"./sqlHighlighter-D5CKH7cv.js";function a(){let{isDark:a}=n(),o=t();e(async()=>{o.value=await i({appearance:()=>a.value?`dark`:`light`})});function s(e){return o.value?.(e)??r(e)}return{highlight:s,sqlHighlighter:o}}export{a as t};
