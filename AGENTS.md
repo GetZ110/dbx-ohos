@@ -100,7 +100,14 @@ cp target/release/libdbx_ohos.so \
 - 同步上游 v0.6.9（382 commits，1123 文件；冲突 2 处 + lib.rs 回填 1 条上游路由 `/app-settings/sql-file-upload-max-bytes`）
 - HAP 产物重建流程落地：前端 dist 走 fork CI（GetZ110/dbx Actions 从合并后源码构建，勿用 Release 包——其落后 main 几十个提交）、Rust `.so` 本地 OHOS release 构建，已写入「同步上游」章节
 - JRE 解压适配：`extract_jre_tar` 改为逐条目解包并跳过 symlink（沙箱创建符号链接返回 EPERM；JRE 包仅 `legal/` 下有链接）
-- 系统任务栏/Dock 颜色：**结论为应用侧不可控**（属系统级外观）。`setColorMode` / `setWindowSystemBarProperties` 只能影响应用窗口自身的状态栏与导航栏区域，窗口外的系统 Dock 最大化后仍为系统色。不再作为待办
+- 系统任务栏/Dock 与「跟随系统」主题（2026-09 重做，推翻旧结论）：旧的「应用侧不可控」结论**错误**——观察到的白色来自 `applySystemBarColor` 里 `savedTheme === 'dark'` 的粗糙判断（'system' 被当成 light → 强行刷白），而该函数**只在 `windowStatusChange` 进入最大化时调用**，所以表现为「一最大化 dock 就变白/变暗」。
+  - 正确做法：始终把**有效外观**显式写入应用 colorMode（`context.setColorMode`），并同步 `setWindowSystemBarProperties`；`'system'` 不再留空（留空会让 dock 回退白色）。
+  - 「跟随系统」的**唯一真值来源是 `uiAppearance.getDarkMode()`**（`@kit.ArkUI`，返回 `ALWAYS_DARK=0` / `ALWAYS_LIGHT=1`）。已实测：应用把 colorMode 强制为 light 时，该 API 仍返回系统真实值（system=dark 时返回 0）——即它**不受应用 override 影响**。
+  - **绝不要**用 `window.matchMedia('(prefers-color-scheme: dark)')` 或 web 侧渲染结果反推系统状态：ArkWeb 跟随应用 colorMode，会形成「system → 回读上一次显式模式」的自锁（表现为暗色切「跟随系统」后固定暗色）。
+  - **绝不要**在应用 override 之后再读 `resourceManager.getConfigurationSync().colorMode`（返回的是 override 值，会污染系统状态缓存）；只在 onCreate 覆盖前读一次作为 fallback。
+  - 桥接：`dbxNativeWindow.syncSystemAppearance()`（web 每秒轮询：native 重读系统态并重刷 chrome，返回有效外观）、`getEffectiveAppearance()`、`setAppearanceFromWeb()`（web→native 只同步标题按钮色）。原生态同时写入 AppStorage `dbx_system_dark` 供加载页使用。
+  - 系统深色模式开关会走 `EntryAbility.onConfigurationUpdate` → `refreshSystemDark()`，1s 轮询作为兜底；两者都会重刷 colorMode / 标题按钮 / 系统栏。
+  - 防坑：`setColorMode()` 会**同步重入** `onConfigurationUpdate`，故 `lastAppliedColorMode` 必须在调用**之前**置位，否则无限递归 → `RangeError: Stack overflow`（运行时按致命 JS 错误杀进程）。
 
 ## 下一步任务
 

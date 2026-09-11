@@ -1,4 +1,4 @@
-import { AbilityConstant, Configuration, ConfigurationConstant, UIAbility, Want, common } from '@kit.AbilityKit';
+import { AbilityConstant, Configuration, UIAbility, Want, common } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
 import { BusinessError } from '@kit.BasicServicesKit';
@@ -27,26 +27,20 @@ export default class EntryAbility extends UIAbility {
       const context = this.context as common.UIAbilityContext;
       ThemePrefs.init(context);
       const savedTheme: string = ThemePrefs.getPref('dbx-theme');
-      // Make the app (and the system chrome/dock around the window) follow the
-      // saved light/dark theme instead of leaving it unset (which can show a
-      // white app bar even in dark mode).
-      let mode: number = ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET;
-      if (savedTheme === 'dark') {
-        mode = ConfigurationConstant.ColorMode.COLOR_MODE_DARK;
-      } else if (savedTheme === 'light') {
-        mode = ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT;
-      }
-      // Set on the UIAbilityContext (and the application context) so the system
-      // chrome/dock can follow the app theme like other apps do when foreground.
-      // For 'system'/'unset', do NOT force a color mode: letting the OS default
-      // propagate keeps window.matchMedia/prefers-color-scheme in sync with the
-      // real system light/dark state.
-      if (savedTheme === 'dark' || savedTheme === 'light') {
-        context.setColorMode(mode);
-        context.getApplicationContext().setColorMode(mode);
-      }
-      hilog.info(DOMAIN, TAG, 'Ability onCreate, colorMode=%{public}d, savedTheme=%{public}s',
-        mode, savedTheme.length > 0 ? savedTheme : '(unset)');
+      // Read the true system dark-mode state from the native UI-appearance state
+      // (uiAppearance.getDarkMode). The resourceManager configuration is passed
+      // only as a fallback for builds without that API; it is read BEFORE any
+      // color-mode override so it reflects the real system value.
+      WindowBridge.refreshSystemDark(context.resourceManager.getConfigurationSync().colorMode);
+
+      // Apply the saved theme now, while the window stage does not exist yet, so
+      // the window/dock chrome starts in the right color. Passing the context
+      // explicitly is required because window.init() captures it later.
+      const themeMode: string = savedTheme.length > 0 ? savedTheme : 'system';
+      WindowBridge.applyThemeForMode(themeMode, context);
+      hilog.info(DOMAIN, TAG, 'Ability onCreate, savedTheme=%{public}s, systemDark=%{public}s',
+        savedTheme.length > 0 ? savedTheme : '(unset)',
+        WindowBridge.getSystemDarkMode() === true ? 'true' : 'false');
     } catch (err) {
       hilog.error(DOMAIN, TAG, 'Failed to set colorMode. Cause: %{public}s', JSON.stringify(err));
     }
@@ -76,11 +70,10 @@ export default class EntryAbility extends UIAbility {
       WindowBridge.init(mainWindow, () => {
         this.handleWindowClose();
       }, this.context as common.UIAbilityContext);
-      const ctx = this.context as common.UIAbilityContext;
-      const config = ctx.resourceManager.getConfigurationSync();
-      if (config.colorMode !== undefined) {
-        WindowBridge.setSystemColorMode(config.colorMode);
-      }
+      // Do NOT re-read getConfigurationSync().colorMode here: by now the
+      // application color mode has been overridden to the app theme, so the read
+      // returns that override rather than the real system setting, which would
+      // corrupt WindowBridge's systemColorMode (the input for 'system' mode).
       this.applyImmersiveWindow(mainWindow);
     } catch (err) {
       const e = err as BusinessError;
@@ -205,20 +198,11 @@ export default class EntryAbility extends UIAbility {
       // Allow dragging/maximize via the hidden title-bar area without showing
       // a separate title bar.
       mainWindow.setWindowTitleMoveEnabled(true);
-      // Try to make the window's system bar/dock area follow the app theme.
-      // Note: the OS taskbar/dock (outside the app window) may still follow the
-      // global system theme and be beyond per-app control.
-      const savedTheme = ThemePrefs.getPref('dbx-theme');
-      const darkChrome = savedTheme === 'dark';
-      const chromeColor = darkChrome ? '#1c1c1e' : '#ffffff';
-      mainWindow.setWindowSystemBarProperties({
-        statusBarColor: chromeColor,
-        navigationBarColor: chromeColor
-      }).then(() => {
-        hilog.info(DOMAIN, TAG, 'system bar colors applied (dark=%{public}s)', darkChrome ? 'true' : 'false');
-      }).catch((err: BusinessError) => {
-        hilog.warn(DOMAIN, TAG, 'setWindowSystemBarProperties failed: %{public}s', err.message);
-      });
+      // Color the window's status/navigation strip (the dock area when the
+      // window is maximized) from the resolved appearance. applyEffectiveAppearance
+      // reads the native system state, so 'system' mode no longer falls back to
+      // white.
+      WindowBridge.applyEffectiveAppearance();
       hilog.info(DOMAIN, TAG, '%{public}s', 'Immersive toolbar window mode applied');
     } catch (err) {
       const e = err as BusinessError;

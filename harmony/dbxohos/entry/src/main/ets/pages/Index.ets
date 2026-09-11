@@ -110,11 +110,20 @@ private windowInjectionScript: string =
     '(function(){' +
     'window.__HARMONY_DESKTOP__=true;' +
     'function syncDecorTheme(){try{var mode=null;try{mode=localStorage.getItem("dbx-theme");}catch(e){}var w=window.dbxNativeWindow;if(!w||!w.setThemeModeFromWeb)return;w.setThemeModeFromWeb(mode||"system");}catch(e){}}' +
+    // Native <-> Web appearance sync. The page reports the appearance it is
+    // currently rendering, then the shell re-reads the true system dark-mode
+    // state (uiAppearance) and re-asserts the resolved chrome last, so the
+    // authoritative native value always wins over a possibly stale page value.
+    'function syncAppearance(){try{var w=window.dbxNativeWindow;if(!w)return;' +
+    'if(w.setAppearanceFromWeb){var dark=document.documentElement.classList.contains("dark");w.setAppearanceFromWeb(dark?"dark":"light");}' +
+    'var eff="system";if(w.syncSystemAppearance){eff=w.syncSystemAppearance();}' +
+    'window.__DBX_NATIVE_APPEARANCE__=eff;}catch(e){}}' +
     'function ensureSpacing(){try{var s=document.getElementById("dbx-hm-spacing");if(!s&&document.head){s=document.createElement("style");s.id="dbx-hm-spacing";document.head.appendChild(s);}var w=window.dbxNativeWindow;var reserve=8;if(w&&w.getTitleButtonReserveWidth)reserve=w.getTitleButtonReserveWidth()||8;if(s)s.textContent=".app-toolbar{padding-right:"+reserve+"px!important}.app-toolbar > div:last-child{margin-right:0!important}";}catch(e){}}' +
-    'function boot(){ensureSpacing();syncDecorTheme();try{if(document.documentElement&&window.MutationObserver){new MutationObserver(function(){syncDecorTheme();ensureSpacing();}).observe(document.documentElement,{attributes:true,attributeFilter:["class"],childList:false,subtree:false});}}catch(e){}}' +
+    'function boot(){ensureSpacing();syncDecorTheme();syncAppearance();try{if(document.documentElement&&window.MutationObserver){new MutationObserver(function(){syncDecorTheme();ensureSpacing();syncAppearance();}).observe(document.documentElement,{attributes:true,attributeFilter:["class"],childList:false,subtree:false});}}catch(e){}}' +
     'if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",boot);else boot();' +
     'setInterval(ensureSpacing,1000);' +
     'setInterval(syncDecorTheme,1000);' +
+    'setInterval(syncAppearance,1000);' +
     '})();'
   // Injects bottom safe-area padding so interactive web content is not covered
   // by the system navigation/three-button area. Reads the avoid height from the
@@ -360,7 +369,7 @@ private windowInjectionScript: string =
         .javaScriptProxy({
           object: this.windowBridge,
           name: 'dbxNativeWindow',
-          methodList: ['minimize', 'toggleMaximize', 'close', 'startMove', 'isMaximized', 'getBottomNavHeight', 'getTitleButtonReserveWidth', 'setDarkMode', 'setThemeModeFromWeb', 'openExternal'],
+          methodList: ['minimize', 'toggleMaximize', 'close', 'startMove', 'isMaximized', 'getBottomNavHeight', 'getTitleButtonReserveWidth', 'setDarkMode', 'setThemeModeFromWeb', 'setAppearanceFromWeb', 'syncSystemAppearance', 'getEffectiveAppearance', 'openExternal'],
           controller: this.controller
         })
         .javaScriptOnDocumentStart([{
@@ -408,6 +417,13 @@ private windowInjectionScript: string =
               hilog.info(DOMAIN, TAG, 'hsync-dom=%{public}s', v);
             }).catch((e: Error) => {
               hilog.warn(DOMAIN, TAG, 'hsync-dom-error=%{public}s', e.message);
+            });
+          this.controller.runJavaScript(
+            "document.documentElement.classList.contains('dark')")
+            .then((v: string) => {
+              hilog.info(DOMAIN, TAG, 'theme-dark-at-page-end=%{public}s', v);
+            }).catch((e: Error) => {
+              hilog.warn(DOMAIN, TAG, 'theme-dark-probe-error=%{public}s', e.message);
             });
           setTimeout(() => {
             const hsync1: string = ThemePrefs.getPref('dbx-diag-hsync');
