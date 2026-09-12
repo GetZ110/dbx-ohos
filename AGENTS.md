@@ -117,6 +117,38 @@ cp target/release/libdbx_ohos.so \
   - 根因：每次冷启动无条件重写 695 个前端文件 → 每个文件 `Last-Modified` 都变 → `If-Modified-Since` 永不命中 → WebView 每次都重新下载 + 重新编译整个启动闭包。
   - 已修：① 指纹判断跳过重复复制（`dbx-dist-fingerprint`）② `/api/health` 改短间隔起步退避（原固定 300ms，最坏白等 300ms）③ 静态资源 `Cache-Control`（`assets/*` 一年 immutable、其余 no-cache）+ `ETag` + `If-None-Match→304`，MCP/API 的路由与压缩层不受影响 ④ 复制改全异步 + 与原生服务启动并行 ⑤ 启动页文案分段 ⑥ `index.html` 注入 23 条 `modulepreload`（覆盖启动闭包 83% 字节）⑦ `libdbx_ohos.so` 改 `import lazy` ⑧ 启动页隐藏兜底 2s→400ms、40 次→10 次、并新增「`#root` 有子节点即隐藏」判定。
   - 另修：原生服务改绑 `127.0.0.1`（此前 `0.0.0.0` + `disablePassword=true` = 局域网可无认证调用全部 API）；OHOS 上 UI 缩放改走 CSS `zoom`（ArkWeb 无 `setZoom`）。
+  - 「真削冷路径」两项的实测结论（2026-09-13，真机 HAD-W32，**结论：都不成立，勿重复尝试**）：
+    - **#1 `precompileJavaScript` 预生成 V8 code cache —— 收益远小于成本**。API 可用（23/23 chunk 成功，3906KB），但有四个坑：① 进程内**第一次调用必然 reject(-1)**，第 2 次同参数才返回 0 → 必须重试；② `script` 必须传 **`string`**（`fs.readTextSync`），传 `Uint8Array` 会 -1（同样的文件！）；③ `CacheOptions.responseHeaders` 只认 `E-Tag`/`Last-Modified`，且要与真实响应一致（用 HEAD 读，键名大小写不敏感）；④ **生成耗时 7.2s**（3.9MB），而 `bm clean -c` 后冷启动的 `frontend modules loaded` 只从 **1589ms → 1456ms**（-133ms，-8%）——因为生成的 code cache 与 HTTP 缓存同目录、一起被清掉；而稳态本来就命中 HTTP 缓存自带的 code cache（315ms），没有可复用空间。代码保留在 `CodeCacheWarmer.ets`，默认由 `AppConstants.ENABLE_CODE_CACHE_WARMUP=false` 关闭。
+    - **#2 砍启动闭包 —— 列的三项都不可回收**：
+      - `en` 476KB **不是浪费**：`i18n/index.ts` 确实静态导入 en，但**每个非英文 locale 的 chunk 都通过 `locales/fallback.ts` 的 `withEnglishFallback()` 静态导入 en 并以其为底合并**（`zh-CN-*.js` 第一条 import 就是 `./en-*.js`），所以 zh-CN 用户照样要加载 en；去掉 i18n 那句静态导入只会把发现时机推后、字节数不变。真要省，前提是「各语言已完整翻译 → 去掉英文字底合并」，那是上游 i18n 设计变更（缺键会显示原始 key），不属于启动补丁。
+      - `codemirror` 483KB：被共享 chunk 图拉入 —— `lib/sql/sqlCompletion.ts` 运行时导入 `@codemirror/lang-sql` 的 8 个方言对象、`lib/sql/sqlSyntaxTreeWindow.ts` 导入 `@codemirror/language` 的 `syntaxTree`，而它们又被打进 api 共享 chunk（`api-*.js` 的第一条 import 就是 `codemirror-*.js`）。要去掉必须把这些共享 SQL 模块改成动态导入 = 上游重构。
+      - `api` 655KB / `App` 877KB：核心图（737 个 API 函数 + 全部视图/对话框），不可切分。
+    - 含义：**Web 侧冷路径的可回收空间已经很小**，再想显著变快只能动上游打包/代码分割策略，或走上面「ArkUI 重构评估」的阶段 1（原生外壳，让第一屏不依赖 ArkWeb）。
+
+## ArkUI 重构评估（2026-09-13，结论：暂不全量重构）
+
+前端实测规模（`wc`/`find`，非测试代码）：
+
+| 维度 | 数量 |
+|---|---|
+| 源码 | 459 个 `.vue` + 2047 个 `.ts`，**≈48.9 万行**（`.vue` 20.5 万 + `.ts` 28.4 万），另有 16.3 万行测试 |
+| 组件 | 444 个 `.vue`，其中 **84 个 `*Dialog*`**，45 个功能目录 |
+| 巨石 | `DataGrid.vue` **14309 行**、`ConnectionDialog.vue` 9381、`QueryEditor.vue` 7740、`SidebarTreeRuntimeHost.vue` 6505、`AiAssistant.vue` 5716 |
+| 状态层 | 15 个 Pinia store + 71 个 composable |
+| API 层 | `api.ts` 1017 + `tauri.ts` 5216 + `http.ts` 4535（同一 **737 函数**接口两套实现） |
+| 连接类型 | **80 种**（`types/generated/databaseTypes.ts`） |
+| i18n | 26 种语言，`en.ts` 单文件 9768 行 |
+
+**三个必须从零造轮子的成本中心**：① SQL 编辑器（CodeMirror 6 × 14 包，ArkUI 无可用的代码编辑器控件）8–14 人月；② DataGrid 自绘（虚拟滚动/canvas/冻结列/区域选择…）5–9 人月；③ 图表/血缘/ER（echarts + vue-flow + elkjs + leaflet）4–7 人月。合计估算 **44–77 人月（5–8 人年）**，另加 ArkTS 严格模式导致的 30–50% 改写量。
+
+**不建议全量重构的两个理由**：① 上游极活跃（上次同步 382 commits/1123 文件），原生前端会把「同步上游」从 merge 变成永久重写；② 收益（去 ArkWeb 启动 ~0.6s、去 HTTP/沙箱拷贝 ~0.1s、网格不丢帧、原生输入）与 5–8 人年 + 永久分叉不成比例。
+
+**推荐的渐进路线（备案，不在短期开工）**：
+
+- 阶段 0（进行中）：继续压 Web 侧——V8 code cache、砍启动闭包（`en` 静态兜底、`codemirror`、`api`、`App`）。投入产出比最高。
+- 阶段 1（1–3 人月，低风险）：**原生外壳**——连接列表/最近连接/设置/启动页与错误页用 ArkUI 渲染，工作区仍是 Web；ArkWeb 在后台预热。顺带消掉启动页主题门控问题。
+- 阶段 2（3–6 人月）：**高频简单面板原生化**——侧边栏树/对象浏览器/结构编辑器+DDL/导入导出向导/驱动管理（ArkUI `List/Form/Navigation/Dialog` 可覆盖）。
+- 阶段 3（不建议）：DataGrid 自绘 + SQL 编辑器自研，各自都是独立项目，除非有明确产品理由，否则保留 Web 版。
 
 ## 下一步任务
 

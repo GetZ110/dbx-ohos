@@ -5,6 +5,7 @@ import { AppConstants } from '../common/Constants';
 import { WebPrefsBridge } from '../services/WebPrefsBridge';
 import { ThemePrefs } from '../services/ThemePrefs';
 import { WindowBridge } from '../services/WindowBridge';
+import { CodeCacheWarmer } from '../services/CodeCacheWarmer';
 
 const DOMAIN = 0xDB2;
 const TAG = 'DBX_PAGE';
@@ -41,6 +42,7 @@ struct Index {
   private hideLoadingTimer: number = -1;
   private firstContentfulPaintReceived: boolean = false;
   private themeWatchTimer: number = -1;
+  private codeCacheTimer: number = -1;
 private windowInjectionScript: string =
     '(function(){' +
     'function addStyle(){' +
@@ -291,6 +293,10 @@ private windowInjectionScript: string =
       clearInterval(this.themeWatchTimer);
       this.themeWatchTimer = -1;
     }
+    if (this.codeCacheTimer !== -1) {
+      clearTimeout(this.codeCacheTimer);
+      this.codeCacheTimer = -1;
+    }
   }
 
   private startLoadingTimeout(): void {
@@ -301,6 +307,26 @@ private windowInjectionScript: string =
         this.errorText = '页面加载超时，请重试或检查本地服务';
       }
     }, 15000);
+  }
+
+  /**
+   * Generate the V8 code cache for the startup chunks a few seconds after the
+   * page is up, so the work never competes with the first interaction. The
+   * cache is keyed by URL + ETag/Last-Modified, so it stays valid until the
+   * embedded frontend changes.
+   */
+  private scheduleCodeCacheWarmup(): void {
+    if (!AppConstants.ENABLE_CODE_CACHE_WARMUP || this.codeCacheTimer !== -1 || CodeCacheWarmer.isDone()) {
+      return;
+    }
+    this.codeCacheTimer = setTimeout(() => {
+      this.codeCacheTimer = -1;
+      const context = getContext(this) as common.UIAbilityContext;
+      const distDir: string = `${context.filesDir}/${AppConstants.DIST_DIR_NAME}`;
+      CodeCacheWarmer.warm(this.controller, distDir, AppConstants.SERVER_URL).catch((e: Error) => {
+        hilog.warn(DOMAIN, TAG, 'code cache warmup failed: %{public}s', e.message);
+      });
+    }, 4000);
   }
 
   private clearLoadingTimeout(): void {
@@ -419,6 +445,7 @@ private windowInjectionScript: string =
           this.hideLoadingTimer = setTimeout(() => {
             this.waitForWebReadyThenHide();
           }, 400);
+          this.scheduleCodeCacheWarmup();
           const hsync0: string = ThemePrefs.getPref('dbx-diag-hsync');
           hilog.info(DOMAIN, TAG, 'hsync-probe-0=%{public}s', hsync0.length > 0 ? hsync0 : '(empty)');
           this.controller.runJavaScript(
