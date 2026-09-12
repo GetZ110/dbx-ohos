@@ -148,6 +148,7 @@ cp target/release/libdbx_ohos.so \
 - **不要再无条件重写沙箱里的 `dbx-dist`**：`ServeDir` 的缓存校验器就是文件 mtime，重写 = mtime 变 = WebView 每次重新下载并重新编译 4.59MB 启动闭包（这是 1.73s 的大头）。只允许在指纹变化时复制（`RawFileCopier.copyRawDirIfNeeded`）；调试时若要强制重拷，改 `AppConstants.DIST_FINGERPRINT_KEY` 的值或清应用数据。
 - **原生 HTTP 服务必须绑 `127.0.0.1`**：HAP 传 `disablePassword: true`（`auth_middleware` 直接放行所有 `/api/*`），绑 `0.0.0.0` 等于把整套数据库客户端 API 暴露给局域网。`dbx-web` 用 `DBX_BIND_HOST`（默认仍是 `0.0.0.0`，保持桌面/浏览器部署行为），`dbx-ohos` 里固定设成 `127.0.0.1`——**不要删这行**。
 - **静态资源的缓存头**：`mount_public_base_path` 给静态服务单独套了 `Cache-Control`/`ETag`/`If-None-Match→304` 与压缩（`assets/*` 一年 immutable，其余 `no-cache`）。这套层只包静态服务，`/api` 与 `/mcp` 的层不受影响；压缩谓词 `StaticCompressionPredicate` 必须继续排除 `206`/`304`，否则会破坏 `ServeDir` 的 Range 语义。
+- **loopback 上不要开静态 gzip**（`static_compression_enabled()` 已按 `DBX_BIND_HOST` 判掉）：设备上实测取回启动闭包的 243 个 chunk，`Accept-Encoding: gzip` 要 **2.16s**、`identity` 只要 **1.21s** —— 压缩 CPU 远比省下的 loopback 传输值钱。只有绑 `0.0.0.0` 的桌面/浏览器部署才开。
 - **`import lazy` 用于 `libdbx_ohos.so`**：46MB 的 `.so` 只在首次调用 `NativeBridge` 时才 dlopen（API ≥ 12 直接可用，无需额外配置）。若换回普通 `import`，dlopen 会提前到 Ability 模块求值阶段。
 - **发版约定（release 只挂未签名包）**：签名 HAP 含 debug profile（绑定设备 UDID），不可公开发布；每次发 release 前，先把 `AppScope/app.json5` 的 `versionName`/`versionCode` 升到与 release 版本一致（当前基线：1.3.1 ↔ 1003001），再构建并替换 release 资产，保证未签名 hap 的包内版本与 release tag 对齐（2026-08-28 与 2026-09-10 均按此流程替换 release 资产）。
 
