@@ -127,16 +127,25 @@ export default class EntryAbility extends UIAbility {
       return;
     }
     this.serviceStarting = true;
+    const startedAt: number = Date.now();
     try {
       const context = this.context as common.UIAbilityContext;
       ThemePrefs.init(context);
       const filesDir: string = context.filesDir;
       const distDir: string = `${filesDir}/${AppConstants.DIST_DIR_NAME}`;
       const dataDir: string = `${filesDir}/dbx-data`;
-      await RawFileCopier.copyRawDir(context, AppConstants.RAW_DIST_PATH, distDir);
-      if (this.closing) {
-        return;
-      }
+
+      // Copying the embedded frontend and starting the native server are
+      // independent: the server only reads the directory once the WebView asks
+      // for a file, so both run concurrently and the (usually skipped) copy is
+      // only awaited before the page is allowed to load. The copy itself is
+      // asynchronous, so it no longer blocks the ArkTS main thread.
+      const copyPromise: Promise<boolean> = RawFileCopier
+        .copyRawDirIfNeeded(context, AppConstants.RAW_DIST_PATH, distDir, AppConstants.DIST_FINGERPRINT_KEY)
+        .catch((err: BusinessError) => {
+          hilog.error(DOMAIN, TAG, 'frontend copy failed: %{public}s', JSON.stringify(err));
+          return false;
+        });
 
       let nativeStarted: boolean = false;
       if (NativeBridge.isAvailable()) {
@@ -163,6 +172,11 @@ export default class EntryAbility extends UIAbility {
         hilog.info(DOMAIN, TAG, 'Native MCP available at http://127.0.0.1:%{public}d/mcp', AppConstants.WEB_PORT);
       }
 
+      await copyPromise;
+      if (this.closing) {
+        return;
+      }
+
       // Wait until the server is really listening before loading the Web page.
       const ready: boolean = await ServerHealthChecker.waitUntilReady(AppConstants.WEB_PORT, 10000);
       if (!ready) {
@@ -173,6 +187,10 @@ export default class EntryAbility extends UIAbility {
       }
 
       this.serviceActive = true;
+      // The splash screen lives inside the Web page, so it can only distinguish
+      // "service still starting" from "loading the UI" once this flag flips.
+      AppStorage.setOrCreate('dbx_service_ready', true);
+      hilog.info(DOMAIN, TAG, 'Local service ready in %{public}dms', Date.now() - startedAt);
       if (loadPage) {
         this.loadMainPage();
       } else {

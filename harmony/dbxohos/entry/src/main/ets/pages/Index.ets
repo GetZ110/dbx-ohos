@@ -32,6 +32,7 @@ struct Index {
   @State errorText: string = '';
   @State darkLoading: boolean = false;
   @StorageProp('dbx_system_dark') @Watch('onSystemDarkChanged') systemDark: boolean = false;
+  @StorageProp('dbx_service_ready') serviceReady: boolean = false;
   @StorageProp('dbx_reload_token') @Watch('onReloadTokenChanged') reloadToken: number = 0;
   private controller: webview.WebviewController = new webview.WebviewController();
   private prefsBridge: WebPrefsBridge = new WebPrefsBridge();
@@ -318,16 +319,25 @@ private windowInjectionScript: string =
 
   private waitForWebReadyThenHide(): void {
     this.clearHideLoadingTimer();
+    // Theme probing is only a fallback: the splash should disappear when the
+    // SPA has really mounted (#root has children), not on the first paint of the
+    // empty placeholder, and it must not linger for seconds on devices that
+    // never deliver onFirstContentfulPaint.
+    const maxThemeAttempts: number = 10;
+    const maxAttempts: number = 60;
     let attempts: number = 0;
     const tryHide = () => {
       if (!this.loading) {
         return;
       }
       this.controller.runJavaScript(
-        "document.documentElement.classList.contains('dark')")
+        "(function(){var r=document.getElementById('root');" +
+        "return (r&&r.childElementCount>0)?'ui':(document.documentElement.classList.contains('dark')?'dark':'light');})()")
         .then((v: string) => {
-          const webDark: boolean = v === 'true';
-          if (!this.darkLoading || webDark || attempts >= 40) {
+          const uiReady: boolean = v === 'ui';
+          const webDark: boolean = v === 'dark';
+          const themeSettled: boolean = !this.darkLoading || webDark;
+          if (uiReady || (themeSettled && attempts >= maxThemeAttempts) || attempts >= maxAttempts) {
             this.loading = false;
             this.hideLoadingTimer = -1;
           } else {
@@ -408,7 +418,7 @@ private windowInjectionScript: string =
           this.clearHideLoadingTimer();
           this.hideLoadingTimer = setTimeout(() => {
             this.waitForWebReadyThenHide();
-          }, 2000);
+          }, 400);
           const hsync0: string = ThemePrefs.getPref('dbx-diag-hsync');
           hilog.info(DOMAIN, TAG, 'hsync-probe-0=%{public}s', hsync0.length > 0 ? hsync0 : '(empty)');
           this.controller.runJavaScript(
@@ -465,7 +475,7 @@ private windowInjectionScript: string =
             .width(48)
             .height(48)
             .color(this.darkLoading ? '#3B82F6' : '#0A59F7')
-          Text('正在启动 DBX 本地服务…')
+          Text(this.serviceReady ? '正在加载界面…' : '正在启动 DBX 本地服务…')
             .fontSize(14)
             .fontColor(this.darkLoading ? '#c8c8cc' : '#666666')
             .margin({ top: 12 })

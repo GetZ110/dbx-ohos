@@ -23,26 +23,30 @@ dbx-ohos/                     # 父仓库，只有 main 一个分支，直接在
 ## 关键架构
 
 - HAP 启动 `EntryAbility`：
-  1. 把 `resources/rawfile/dbx-dist` 复制到沙箱
-  2. 优先通过 `NativeBridge.startServer()` 启动 Rust `dbx-web`（NAPI）
+  1. 把 `resources/rawfile/dbx-dist` 复制到沙箱——**只在指纹变化时复制**（`RawFileCopier.copyRawDirIfNeeded`，指纹存 Preferences `dbx-dist-fingerprint`），且全程异步
+  2. 与复制**并行**通过 `NativeBridge.startServer()` 启动 Rust `dbx-web`（NAPI）
   3. 失败时回退 ArkTS `HttpServer`
-  4. 等待 `/api/health` 就绪后 `loadContent('pages/Index')`
+  4. 等待 `/api/health` 就绪（短间隔起步的退避轮询）后 `loadContent('pages/Index')`
 - `Index.ets` 是全屏 `Web`，加载 `http://127.0.0.1:4224/`
+- 原生 HTTP 服务**只绑 `127.0.0.1`**（`DBX_BIND_HOST`，见「关键约束」）
 - 原生 MCP：`dbx-web` 在 `/mcp` 挂载 Streamable HTTP MCP（与 Web 同端口 4224）
 - 主题持久化：ArkWeb localStorage 在部分 HarmonyOS 设备重启后不可靠；已用原生 Preferences + `javaScriptOnDocumentStart` 注入恢复兜底
+- 启动页文案分两段：服务未就绪显示「正在启动 DBX 本地服务…」，`AppStorage dbx_service_ready` 置位后显示「正在加载界面…」
 
 ## 重要文件
 
 | 路径 | 说明 |
 |---|---|
 | `upstream/dbx/crates/dbx-ohos/` | Rust NAPI 插件（cdylib `libdbx_ohos.so`） |
-| `upstream/dbx/crates/dbx-web/src/lib.rs` | `dbx-web` HTTP 服务入口；含 `/api/health`、MCP、`AppState` 复用 |
+| `upstream/dbx/crates/dbx-web/src/lib.rs` | `dbx-web` HTTP 服务入口；含 `/api/health`、MCP、`AppState` 复用、静态资源缓存头 |
 | `upstream/dbx/crates/dbx-mcp/src/backend.rs` | `LocalBackend::with_app_state()` 复用 AppState |
 | `harmony/dbxohos/entry/src/main/ets/entryability/EntryAbility.ets` | 生命周期、服务启停、防重入、恢复 reload |
-| `harmony/dbxohos/entry/src/main/ets/pages/Index.ets` | Web 组件、JSProxy、主题注入脚本、错误过滤 |
-| `harmony/dbxohos/entry/src/main/ets/services/ThemePrefs.ets` | 原生 Preferences 持久化 |
+| `harmony/dbxohos/entry/src/main/ets/pages/Index.ets` | Web 组件、JSProxy、主题注入脚本、错误过滤、启动页 |
+| `harmony/dbxohos/entry/src/main/ets/services/RawFileCopier.ets` | rawfile → 沙箱复制；指纹判断 + 全异步 I/O |
+| `harmony/dbxohos/entry/src/main/ets/services/ThemePrefs.ets` | 原生 Preferences 持久化（含 dist 指纹） |
 | `harmony/dbxohos/entry/src/main/ets/services/WebPrefsBridge.ets` | 暴露给 Web 的 `dbxNativePrefs` JS 桥 |
-| `harmony/dbxohos/entry/src/main/ets/services/ServerHealthChecker.ets` | `/api/health` 轮询 |
+| `harmony/dbxohos/entry/src/main/ets/services/ServerHealthChecker.ets` | `/api/health` 轮询（短间隔起步退避） |
+| `harmony/tools/inject_modulepreload.py` | 给构建产物 `index.html` 注入启动闭包 `modulepreload`（每次替换 dist 后必须重跑） |
 
 ## 构建命令
 
@@ -108,6 +112,11 @@ cp target/release/libdbx_ohos.so \
   - 桥接：`dbxNativeWindow.syncSystemAppearance()`（web 每秒轮询：native 重读系统态并重刷 chrome，返回有效外观）、`getEffectiveAppearance()`、`setAppearanceFromWeb()`（web→native 只同步标题按钮色）。原生态同时写入 AppStorage `dbx_system_dark` 供加载页使用。
   - 系统深色模式开关会走 `EntryAbility.onConfigurationUpdate` → `refreshSystemDark()`，1s 轮询作为兜底；两者都会重刷 colorMode / 标题按钮 / 系统栏。
   - 防坑：`setColorMode()` 会**同步重入** `onConfigurationUpdate`，故 `lastAppliedColorMode` 必须在调用**之前**置位，否则无限递归 → `RangeError: Stack overflow`（运行时按致命 JS 错误杀进程）。
+- 启动性能优化（2026-09-12，真机 HUAWEI MateBook Pro / HAD-W32 实测，冷启动 `aa force-stop` + `aa start`）：
+  - 基线：进程创建 → 首屏 FCP **3.09s**，完全可交互约 3.3s。分解：原生服务 0.2s 就绪，之后是 Web 侧 2.7s，其中「前端模块图加载」单项 **1.73s**（4.59MB / 243 chunk）。
+  - 根因：每次冷启动无条件重写 695 个前端文件 → 每个文件 `Last-Modified` 都变 → `If-Modified-Since` 永不命中 → WebView 每次都重新下载 + 重新编译整个启动闭包。
+  - 已修：① 指纹判断跳过重复复制（`dbx-dist-fingerprint`）② `/api/health` 改短间隔起步退避（原固定 300ms，最坏白等 300ms）③ 静态资源 `Cache-Control`（`assets/*` 一年 immutable、其余 no-cache）+ `ETag` + `If-None-Match→304`，MCP/API 的路由与压缩层不受影响 ④ 复制改全异步 + 与原生服务启动并行 ⑤ 启动页文案分段 ⑥ `index.html` 注入 23 条 `modulepreload`（覆盖启动闭包 83% 字节）⑦ `libdbx_ohos.so` 改 `import lazy` ⑧ 启动页隐藏兜底 2s→400ms、40 次→10 次、并新增「`#root` 有子节点即隐藏」判定。
+  - 另修：原生服务改绑 `127.0.0.1`（此前 `0.0.0.0` + `disablePassword=true` = 局域网可无认证调用全部 API）；OHOS 上 UI 缩放改走 CSS `zoom`（ArkWeb 无 `setZoom`）。
 
 ## 下一步任务
 
@@ -136,6 +145,10 @@ cp target/release/libdbx_ohos.so \
 - **主题持久化**：ArkWeb localStorage 跨完全退出可能不落盘；当前方案是 JS 注入把 `dbx-*` 写入原生 Preferences，启动前再恢复进 localStorage。
 - **健康检查**：原生 `dbx-web` 必须有 `/api/health`；否则 `ServerHealthChecker` 会空等 10 秒。
 - **MCP 启动**：不要用 `LocalBackend::open()` 再开一次 SQLite，应复用已打开的 `AppState`。
+- **不要再无条件重写沙箱里的 `dbx-dist`**：`ServeDir` 的缓存校验器就是文件 mtime，重写 = mtime 变 = WebView 每次重新下载并重新编译 4.59MB 启动闭包（这是 1.73s 的大头）。只允许在指纹变化时复制（`RawFileCopier.copyRawDirIfNeeded`）；调试时若要强制重拷，改 `AppConstants.DIST_FINGERPRINT_KEY` 的值或清应用数据。
+- **原生 HTTP 服务必须绑 `127.0.0.1`**：HAP 传 `disablePassword: true`（`auth_middleware` 直接放行所有 `/api/*`），绑 `0.0.0.0` 等于把整套数据库客户端 API 暴露给局域网。`dbx-web` 用 `DBX_BIND_HOST`（默认仍是 `0.0.0.0`，保持桌面/浏览器部署行为），`dbx-ohos` 里固定设成 `127.0.0.1`——**不要删这行**。
+- **静态资源的缓存头**：`mount_public_base_path` 给静态服务单独套了 `Cache-Control`/`ETag`/`If-None-Match→304` 与压缩（`assets/*` 一年 immutable，其余 `no-cache`）。这套层只包静态服务，`/api` 与 `/mcp` 的层不受影响；压缩谓词 `StaticCompressionPredicate` 必须继续排除 `206`/`304`，否则会破坏 `ServeDir` 的 Range 语义。
+- **`import lazy` 用于 `libdbx_ohos.so`**：46MB 的 `.so` 只在首次调用 `NativeBridge` 时才 dlopen（API ≥ 12 直接可用，无需额外配置）。若换回普通 `import`，dlopen 会提前到 Ability 模块求值阶段。
 - **发版约定（release 只挂未签名包）**：签名 HAP 含 debug profile（绑定设备 UDID），不可公开发布；每次发 release 前，先把 `AppScope/app.json5` 的 `versionName`/`versionCode` 升到与 release 版本一致（当前基线：1.3.1 ↔ 1003001），再构建并替换 release 资产，保证未签名 hap 的包内版本与 release tag 对齐（2026-08-28 与 2026-09-10 均按此流程替换 release 资产）。
 
 ## 同步上游（t8y2/dbx main → harmonyos-port）
@@ -206,6 +219,12 @@ unzip -q dist.zip -d web-dist
 DEST=harmony/dbxohos/entry/src/main/resources/rawfile/dbx-dist
 rm -rf $DEST && mkdir -p $DEST && cp -r web-dist/. $DEST/
 
+# c2) 【必须】给新的 index.html 注入启动闭包 modulepreload（幂等，可重复执行）
+#     构建产物只 preload 4 个 chunk，而启动闭包有 243 个 / 4.59MB；
+#     脚本按静态 import 图算出闭包，注入大于 16KB 的 23 个 chunk（≈83% 字节）。
+#     dist 一被整体替换，这步就得重跑，否则第 ⑥ 项优化失效。
+python3 harmony/tools/inject_modulepreload.py
+
 # d) 删临时分支回收（本地 + 远程），删除时 workflow 一并消失
 git -C upstream/dbx push origin --delete ci/build-web-dist
 git -C upstream/dbx branch -D ci/build-web-dist
@@ -242,7 +261,7 @@ cp target/release/libdbx_ohos.so ../../harmony/dbxohos/entry/libs/arm64-v8a/libd
 
   这类异常若发生在 `App.vue` 启动的 try/catch 里，会被错误地报成 **「加载已保存连接失败：…」**（与连接无关，极易误判）。排查方式：`hdc hilog | grep -E "unhandled rejection|Cannot read properties of undefined"`，正常启动应为 0 条。
 
-  已加守卫的位置（合并后若被上游覆盖需重加）：`App.vue` 的 `initializeUpdatePreparation()` / `setupDetachedWindowEvents()`、`composables/useTauriEvents.ts` 的 `setupTauriListeners()`。**每次同步后建议全局扫一遍**：
+  已加守卫的位置（合并后若被上游覆盖需重加）：`App.vue` 的 `initializeUpdatePreparation()` / `setupDetachedWindowEvents()`、`setupTauriListeners()`（`composables/useTauriEvents.ts`）、`uiScaleApplyQueue` 的 apply 回调（非 Tauri 时走 `applyUiScaleWithCss()`，ArkWeb 没有 `setZoom`）。**每次同步后建议全局扫一遍**：
 
   ```bash
   # 找出「只判 isDesktop / isDesktopRuntime 却触碰 @tauri-apps」的新代码
@@ -260,6 +279,26 @@ hdc hilog | grep -E "DBX_ABILITY|DBX_NATIVE|DBX_HEALTH|DBX_PAGE|DBX_THEME_PREFS"
 正常启动应看到：
 
 - `native server started on port 4224`
-- `server ready: http://127.0.0.1:4224/api/health`
+- `frontend unchanged (fp=…), skipped copy in Xms`（首次安装/换版本后应变为 `frontend copied from rawfile in Xms`）
+- `Local service ready in Xms`（正常应 < 200ms）
+- `server ready: http://127.0.0.1:4224/api/health (attempt N)`（N 应为 1–3）
 - `Succeeded in loading the content.` 只出现一次
 - `Index about to appear` 只出现一次
+- Web 侧 `[STARTUP]` 埋点：`frontend bootstrap begin` → `frontend modules loaded` → `vue mounted`
+- 不应再出现 `[DBX] Failed to apply UI scale` 与 `Cannot read properties of undefined (reading 'transformCallback')`
+
+### 冷启动耗时测量（对比优化效果用）
+
+```bash
+hdc shell aa force-stop com.dbx.ohos; sleep 1
+hdc shell hilog -r
+(hdc hilog > .tmp/perf.log &) ; sleep 2
+hdc shell aa start -a EntryAbility -b com.dbx.ohos
+# 等 ~25s，然后按时间戳对齐这几条：
+#   进程创建      APPSPAWN 里该 pid 的第一行
+#   首屏          chromium: [WebLoadTracker] PageFirstContentfulPaintInPage … FCP:<ms>
+#   可交互        [STARTUP] savedSqlStore.initFromStorage: Xms
+grep -E "DBX_ABILITY|DBX_COPY|DBX_HEALTH|ARKWEB-CONSOLE" .tmp/perf.log
+```
+
+2026-09-12 优化前基线（HAD-W32）：进程创建 → FCP 3.09s，`frontend modules loaded` 单项 1.73s。

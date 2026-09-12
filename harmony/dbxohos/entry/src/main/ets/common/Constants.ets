@@ -7,6 +7,9 @@ export class AppConstants {
   static readonly MCP_PORT: number = 18888;
   static readonly RAW_DIST_PATH: string = 'dbx-dist';
   static readonly DIST_DIR_NAME: string = 'dbx-dist';
+  // Preferences key holding the fingerprint of the last frontend copy, so an
+  // unchanged bundle is not copied (and its mtimes are not reset) on every start.
+  static readonly DIST_FINGERPRINT_KEY: string = 'dbx-dist-fingerprint';
   static readonly INDEX_FILE: string = 'index.html';
   static readonly SERVER_URL: string = `http://${AppConstants.HOST}:${AppConstants.WEB_PORT}/`;
   static readonly MCP_URL: string = `http://${AppConstants.HOST}:${AppConstants.MCP_PORT}/mcp`;
