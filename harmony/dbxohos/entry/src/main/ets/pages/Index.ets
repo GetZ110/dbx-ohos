@@ -166,29 +166,40 @@ private windowInjectionScript: string =
   // in lockstep on the compositor (both axes), sticky-left pinned columns keep
   // working, and dbx's old scrollLeft writes become no-ops (overflow visible).
   // Canvas render mode (self-drawn grid) is left untouched.
+  //
+  // The shell is a Vue-owned node, so relocating it must be undoable: when the
+  // render mode switches to canvas, Vue's own patch removes the DOM-mode wrapper
+  // and the relocated shell with it, which made the header vanish until the tab
+  // was reopened. Every move therefore records the shell's home parent, and the
+  // banner is put back (styles cleared) as soon as the grid leaves DOM mode or
+  // the patch detaches the node.
   private gridHeaderInScrollerScript: string =
     '(function(){' +
-    'function moveOne(root){' +
+    'var moved=window.__dbxGridHeaderMoved||(window.__dbxGridHeaderMoved=new WeakMap());' +
+    'function findShell(root){return root.querySelector(".data-grid-header-shell");}' +
+    'function isCanvas(sc){return !!sc&&sc.classList.contains("canvas-grid-scroller");}' +
+    'function isBranch(el){return !!(el&&el.classList&&(el.classList.contains("data-grid-scroller")||(el.classList.contains("relative")&&el.classList.contains("min-h-0")&&el.classList.contains("flex-1"))));}' +
+    'function branchOf(home,shell){' +
+    'for(var i=0;i<home.children.length;i++){var c=home.children[i];if(c!==shell&&isBranch(c))return c;}' +
+    'return null;' +
+    '}' +
+    'function attachHome(home,shell){' +
+    'var anchor=branchOf(home,shell);' +
+    'if(anchor){if(shell.parentElement!==home||shell.nextElementSibling!==anchor)home.insertBefore(shell,anchor);}' +
+    'else if(shell.parentElement!==home){home.appendChild(shell);}' +
+    '}' +
+    'function clearStyles(shell){' +
+    'var props=["background","position","top","zIndex","width","overflow","boxShadow","visibility","flexShrink","minHeight","height"];' +
+    'for(var i=0;i<props.length;i++){try{shell.style[props[i]]="";}catch(e){}}' +
+    '}' +
+    'function restore(rec){' +
     'try{' +
-    'var sc=root.querySelector(".data-grid-scroller");' +
-    'if(!sc||sc.classList.contains("canvas-grid-scroller"))return;' +
-    'var shell=root.querySelector(".data-grid-header-shell");' +
-    'if(!shell||shell.classList.contains("data-grid-transpose-header"))return;' +
-    'if(sc.contains(shell)){syncStyle(shell);return;}' +
-    'var row=shell.querySelector(".data-grid-header-row");' +
-    'var bg=row&&row.firstElementChild?getComputedStyle(row.firstElementChild).backgroundColor:null;' +
-    'if(bg&&bg!=="rgba(0, 0, 0, 0)")shell.style.background=bg;' +
-    'shell.style.position="sticky";' +
-    'shell.style.top="0";' +
-    'shell.style.zIndex="30";' +
-    'shell.style.width="max-content";' +
-    'shell.style.overflow="visible";' +
-    'shell.style.boxShadow="0 1px 0 rgba(128,128,128,0.18)";' +
-    'shell.style.minHeight="28px";' +
-    'shell.style.height="28px";' +
-    'shell.style.visibility="visible";' +
-    'shell.style.flexShrink="0";' +
-    'sc.insertBefore(shell,sc.firstChild);' +
+    'if(!rec||!rec.shell)return;' +
+    'rec.moved=false;' +
+    'clearStyles(rec.shell);' +
+    'var home=rec.home;' +
+    'if(!home||!home.isConnected)return;' +
+    'attachHome(home,rec.shell);' +
     '}catch(e){}' +
     '}' +
     'function syncStyle(shell){' +
@@ -200,15 +211,60 @@ private windowInjectionScript: string =
     'if(shell.style.overflow!=="visible")shell.style.overflow="visible";' +
     '}catch(e){}' +
     '}' +
+    'function moveOne(root){' +
+    'try{' +
+    'var sc=root.querySelector(".data-grid-scroller");' +
+    'if(!sc)return;' +
+    'var shell=findShell(root);' +
+    'var rec=moved.get(root);' +
+    'if(!shell){if(rec&&!rec.shell.isConnected)restore(rec);return;}' +
+    'if(isCanvas(sc)){' +
+    'if(rec&&rec.shell===shell&&rec.moved)restore(rec);' +
+    'return;' +
+    '}' +
+    'if(shell.classList.contains("data-grid-transpose-header"))return;' +
+    'if(sc.contains(shell)){syncStyle(shell);return;}' +
+    'if(!rec||rec.shell!==shell){rec={shell:shell,home:shell.parentElement,moved:false};moved.set(root,rec);}' +
+    'var row=shell.querySelector(".data-grid-header-row");' +
+    'var bg=row&&row.firstElementChild?getComputedStyle(row.firstElementChild).backgroundColor:null;' +
+    'if(bg&&bg!=="rgba(0, 0, 0, 0)")shell.style.background=bg;' +
+    'shell.style.position="sticky";' +
+    'shell.style.top="0";' +
+    'shell.style.zIndex="30";' +
+    'shell.style.width="max-content";' +
+    'shell.style.overflow="visible";' +
+    'shell.style.boxShadow="0 1px 0 rgba(128,128,128,0.18)";' +
+    // Never pin the shell height: the real header height follows the rendered
+    // lines (name only = 28px, + column type/comment line = 40px). A hard-coded
+    // 28px combined with `overflow: visible` makes the taller header row paint
+    // 12px over the first data row ("first row covered by the header").
+    'shell.style.visibility="visible";' +
+    'shell.style.flexShrink="0";' +
+    'sc.insertBefore(shell,sc.firstChild);' +
+    'rec.moved=true;' +
+    '}catch(e){}' +
+    '}' +
     'function applyAll(){' +
     'var roots=document.querySelectorAll("[data-grid-root]");' +
     'for(var i=0;i<roots.length;i++)moveOne(roots[i]);' +
+    '}' +
+    // Vue's patch removes the DOM-mode wrapper (and the relocated shell inside
+    // it) as one task; MutationObserver callbacks are microtasks, so putting the
+    // shell back here happens before the next paint and the header never blinks.
+    'function healDetached(){' +
+    'try{' +
+    'var roots=document.querySelectorAll("[data-grid-root]");' +
+    'for(var i=0;i<roots.length;i++){' +
+    'var rec=moved.get(roots[i]);' +
+    'if(rec&&rec.shell&&!rec.shell.isConnected&&rec.home&&rec.home.isConnected)restore(rec);' +
+    '}' +
+    '}catch(e){}' +
     '}' +
     'function boot(){' +
     'applyAll();' +
     'try{' +
     'if(window.MutationObserver){' +
-    'var mo=new MutationObserver(function(){clearTimeout(mo.t);mo.t=setTimeout(function(){applyAll();},250);});' +
+    'var mo=new MutationObserver(function(){healDetached();clearTimeout(mo.t);mo.t=setTimeout(function(){applyAll();},250);});' +
     'mo.observe(document.documentElement,{childList:true,subtree:true});' +
     '}' +
     '}catch(e){}' +
