@@ -115,7 +115,7 @@ node /storage/Users/currentUser/deveco_tools/hvigor/bin/hvigorw.js \
 ### P0 收口：验最后一处 + 发 1.3.2（1–2 天）
 
 1. ✅ **UI 缩放已修复并经人工确认通过（2026-09-13）**：问题链与修法见「关键约束/UI 缩放」（初版 CSS `zoom` 整页右溢 → 误用实为视觉缩放的 `zoom()` → 最终 CSS `zoom` + 视口单位补偿 + 工具栏反向 zoom 固定尺寸 + 壳 min-size 归零）。纯 native 侧注入，不需要重建 dist。自动化不变量：0.75–1.9 全档 `shell = 视口`、`scroll == client`、`toolbar = 视口宽×40` 恒定、`vvScale = 1`；启动冒烟 12/12。
-1b. ⏳ **已知遗留：UI 缩放值不跨重启保留**（重启回 100%）。与溢出无关，未修。机理应与主题相同——ArkWeb localStorage 跨完全退出可能不落盘，主题是靠 `dbxNativePrefs` 镜像进原生 Preferences 规避的，uiScale 需要照做（或确认上游 settings store 的持久化方式）。修之前 release notes 不要声称"缩放会记住"。
+1b. ⚠️ **缩放值是持久化的，但启动时落地两次**（2026-09-13 实测：清空日志后冷启、无任何按键，页面依次打 `DBX-ZOOM reset:1` → `applied:1.3`）——settings store 默认值先应用，随后异步水合出持久化值，因此启动瞬间有一帧未缩放的闪烁（旧结论"缩放不跨重启保留"是错的，别照它改）。想消掉闪烁需要把 uiScale 也镜像进原生 Preferences 并在 `documentStart` 就应用（theme 已有同款机制），属 P2 打磨，不影响 1.3.2。
 2. **发 1.3.2**：`AppScope/app.json5` 升 `versionName 1.3.2 / versionCode 1003002` → 构建 → 取**未签名** HAP 命名 `DBX_HarmonyOS_v1.3.2_dbx0.6.9_unsigned.hap` → 写 `RELEASE_NOTES_v1.3.2.md`（启动 3.09s→1.65s、局域网暴露修复、UI 缩放修复）→ 替换 release 资产（发版约定见「关键约束/发版」）。
    - 附加价值：**全新安装 = 冷缓存路径**，正好覆盖优化幅度最大、平时最难验的那条链路。
 3. ✅ **启动冒烟已脚本化（2026-09-13 完成）**：`harmony/tools/startup_smoke.sh`——`force-stop → hilog -r → aa start → 抓 25s 日志 → 12 条断言`（断言清单见「验证方式」）。用法：`--mode warm|cold|auto`、`--log <file>`（离线对历史日志重跑断言，不需要设备）、`--serial`；退出码 0/1/2。
