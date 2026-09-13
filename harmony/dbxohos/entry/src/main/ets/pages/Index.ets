@@ -255,31 +255,56 @@ private windowInjectionScript: string =
     'if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",patch);else patch();' +
     '})();';
 
-  // The web layer implements the UI-scale setting with CSS `zoom` on <html>
-  // when the runtime has no native zoom API (its browser fallback). ArkWeb does
-  // have one (WebviewController.zoom, enabled by zoomAccess(true)), and it is
-  // the correct one: CSS zoom leaves `vw`/fixed overlays at the unzoomed viewport
-  // width, so at 125% the toolbar ran past the window edge and its right-side
-  // buttons collided with the native window controls.
+  // UI scale for the OHOS runtime.
   //
-  // This listener runs immediately after the web applies a scale: it moves the
-  // scaling to native page zoom and drops the CSS zoom. If the native call
-  // reports failure, the CSS zoom is restored so the setting still does
-  // something instead of silently doing nothing.
+  // ArkWeb's only page-scaling API, WebviewController.zoom(), turned out to be
+  // *visual* (pinch-style) zoom — measured on device: window.innerWidth stays
+  // 1101 while visualViewport.scale goes 1 -> 1.1 -> 1.32, so the page is
+  // magnified and panned instead of reflowing, zoom-out below fit does nothing
+  // and the pan offset survives a reset. Not usable for a UI-scale setting.
+  //
+  // So the web layer's CSS `zoom` stays (it reflows like browser page zoom).
+  // Its one incompatibility is viewport units: `zoom` magnifies rendering but
+  // `vw`/`vh` and the fixed-position containing block keep the unzoomed
+  // viewport, so App.vue's `fixed inset-0 h-screen w-screen` shell grew to
+  // viewport x zoom and pushed the toolbar's right-side buttons out of the
+  // window. This script re-declares those viewport-unit sizes divided by the
+  // zoom factor, so the layout ends up exactly window-sized again.
+  //
+  // On reset to 100% the injected stylesheet is removed entirely, so the app's
+  // own CSS rules apply untouched.
   private uiScaleBridgeScript: string =
     '(function(){' +
     'if(window.__dbxUiScaleBridge)return;window.__dbxUiScaleBridge=true;' +
+    'function styleEl(){' +
+    'var id="dbx-ui-zoom-style";var el=document.getElementById(id);' +
+    'if(!el){el=document.createElement("style");el.id=id;(document.head||document.documentElement).appendChild(el);}' +
+    'return el;}' +
+    'function dropStyle(){var el=document.getElementById("dbx-ui-zoom-style");if(el&&el.parentNode)el.parentNode.removeChild(el);}' +
+    'function diag(tag){' +
+    'try{' +
+    'var r=document.documentElement;var vv=window.visualViewport;' +
+    'var w=document.querySelector(".fixed.inset-0");var wr=w?w.getBoundingClientRect():null;' +
+    'console.log("[DBX-ZOOM] "+tag+" vp="+window.innerWidth+"x"+window.innerHeight' +
+    '+" scroll="+r.scrollWidth+"x"+r.scrollHeight+" zoom="+(r.style.zoom||"none")' +
+    '+" shell="+(wr?Math.round(wr.right)+"x"+Math.round(wr.bottom):"-")' +
+    '+" vvScale="+(vv?vv.scale:-1));' +
+    '}catch(e){}}' +
     'function apply(scale){' +
     'try{' +
     'var n=parseFloat(scale);' +
     'if(!isFinite(n)||n<=0)return;' +
-    'var b=window.dbxNativeWindow;' +
-    'if(!b||typeof b.setZoom!=="function")return;' +
     'var r=document.documentElement;' +
-    'var ok=false;' +
-    'try{ok=b.setZoom(n)===true;}catch(e){ok=false;}' +
-    'if(ok){if(r)r.style.removeProperty("zoom");}' +
-    'else if(r){r.style.setProperty("zoom",String(n));}' +
+    'if(Math.abs(n-1)<0.0001){r.style.removeProperty("zoom");dropStyle();diag("reset:1");return;}' +
+    'styleEl().textContent=' +
+    '":root{--dbx-viewport-height:calc(100vh / "+n+");}"' +
+    '+"html .h-screen{height:calc(100vh / "+n+") !important;}"' +
+    '+"html .w-screen{width:calc(100vw / "+n+") !important;}"' +
+    '+"html .min-h-screen{min-height:calc(100vh / "+n+") !important;}"' +
+    '+"html .max-h-screen{max-height:calc(100vh / "+n+") !important;}"' +
+    '+"html [data-slot=dialog-content],html [data-slot=dialog-positioner]{max-width:calc(100vw / "+n+" - 2rem) !important;max-height:calc(100vh / "+n+" - 2rem) !important;}";' +
+    'r.style.setProperty("zoom",String(n));' +
+    'diag("applied:"+n);' +
     '}catch(e){}}' +
     'window.addEventListener("dbx:ui-scale-applied",function(ev){' +
     'apply(ev&&ev.detail?ev.detail.scale:undefined);});' +
@@ -290,8 +315,6 @@ private windowInjectionScript: string =
     if (AppConstants.ENABLE_WEB_DEBUG) {
       webview.WebviewController.setWebDebuggingAccess(true);
     }
-    // The UI-scale bridge needs the controller to call ArkWeb's page zoom.
-    WindowBridge.attachWebController(this.controller);
     ThemePrefs.init(getContext(this) as common.UIAbilityContext);
     const savedTheme: string = ThemePrefs.getPref('dbx-theme');
     this.refreshLoadingTheme();
@@ -437,7 +460,7 @@ private windowInjectionScript: string =
         .javaScriptProxy({
           object: this.windowBridge,
           name: 'dbxNativeWindow',
-          methodList: ['minimize', 'toggleMaximize', 'close', 'startMove', 'isMaximized', 'getBottomNavHeight', 'getTitleButtonReserveWidth', 'setDarkMode', 'setThemeModeFromWeb', 'setAppearanceFromWeb', 'syncSystemAppearance', 'getEffectiveAppearance', 'openExternal', 'setZoom'],
+          methodList: ['minimize', 'toggleMaximize', 'close', 'startMove', 'isMaximized', 'getBottomNavHeight', 'getTitleButtonReserveWidth', 'setDarkMode', 'setThemeModeFromWeb', 'setAppearanceFromWeb', 'syncSystemAppearance', 'getEffectiveAppearance', 'openExternal'],
           controller: this.controller
         })
         .javaScriptOnDocumentStart([{
@@ -464,10 +487,9 @@ private windowInjectionScript: string =
         }])
         .onlineImageAccess(true)
         .fileAccess(true)
-        // zoomAccess must stay true: WebviewController.zoom() (the UI-scale
-        // implementation) is a no-op otherwise. Side effect: ArkWeb also accepts
-        // pinch zoom again, which re-asserts itself on the next scale change.
-        .zoomAccess(true)
+        // Keep gesture zoom off: the UI scale uses CSS zoom, and pinch zoom
+        // would fight it (see uiScaleBridgeScript).
+        .zoomAccess(false)
         .onPageBegin(() => {
           this.clearHideLoadingTimer();
           this.firstContentfulPaintReceived = false;

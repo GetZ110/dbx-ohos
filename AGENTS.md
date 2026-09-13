@@ -61,7 +61,7 @@ dbx-ohos/                     # 父仓库，只有 main 一个分支，直接在
 | `harmony/dbxohos/entry/src/main/ets/services/ServerHealthChecker.ets` | `/api/health` 轮询（短间隔起步退避） |
 | `harmony/dbxohos/entry/src/main/ets/services/CodeCacheWarmer.ets` | `precompileJavaScript` 参考实现，**默认关闭**（见附录 C） |
 | `harmony/dbxohos/entry/src/main/ets/services/ThemePrefs.ets` | 原生 Preferences（主题 + dist 指纹） |
-| `harmony/dbxohos/entry/src/main/ets/services/WindowBridge.ets` | 窗口控制 + 系统外观桥（`dbxNativeWindow`）；也承载 UI 缩放的 `setZoom()`（ArkWeb 原生页面缩放） |
+| `harmony/dbxohos/entry/src/main/ets/services/WindowBridge.ets` | 窗口控制 + 系统外观桥（`dbxNativeWindow`）：minimize/maximize/close/drag/外观同步 |
 | `harmony/dbxohos/entry/src/main/ets/services/WebPrefsBridge.ets` | 暴露给 Web 的 `dbxNativePrefs` JS 桥 |
 | `harmony/tools/inject_modulepreload.py` | 给构建产物 `index.html` 注入启动闭包 `modulepreload`（**替换 dist 后必须重跑**） |
 | `harmony/tools/startup_smoke.sh` | 启动冒烟：`force-stop → hilog -r → aa start → 抓 25s → 12 条断言`。`--mode warm\|cold\|auto`、`--log`（离线重跑断言，不需设备）、`--serial`；退出码 0/1/2 |
@@ -114,7 +114,7 @@ node /storage/Users/currentUser/deveco_tools/hvigor/bin/hvigorw.js \
 
 ### P0 收口：验最后一处 + 发 1.3.2（1–2 天）
 
-1. **UI 缩放：真机验证发现真 bug，已修，待目视确认（2026-09-13）**：125% 时 CSS `zoom` 让整页右溢——工具栏右侧按钮被顶出窗口、和原生窗口按钮重合，设置按钮完全看不见。已改用 ArkWeb 原生 `WebviewController.zoom()`（见「关键约束/UI 缩放」；native 侧修复，不需要重建 dist）。已确认：桥生效（`DBX_WINDOW: ui scale applied: 1.5/1.6`）、160% 下内容右边缘不再超出 Web 视口（`uitest dumpLayout`）、启动冒烟 12/12。**待办**：人工在设置里选 125% / 150% 目视确认工具栏与右侧按钮都在窗口内（自动化截图受窗口焦点/遮挡干扰，未取到最大化对比图）。
+1. **UI 缩放：已修复，待人工目视确认（2026-09-13，两次返工）**：问题是 125% 时整页右溢（工具栏右侧按钮被顶出窗口、与窗口按钮重合）。先误判为"ArkWeb 缺缩放 API"而加了 native `zoom()`，真机证明那是视觉缩放（放大+平移、缩不小、复位要重启）；最终定为 **CSS `zoom` + 视口单位补偿**（见「关键约束/UI 缩放」；纯 native 侧注入，不需要重建 dist）。已实测 0.75 / 0.9 / 1.0 / 1.1–1.5 各档：壳尺寸 == 视口、`scroll == client`、`visualViewport.scale` 恒为 1，120% 与 75% 截图中工具栏右侧图标与窗口按钮互不重叠、面板与卡片完整；启动冒烟 12/12。**待办**：人工确认设置里 125% 的观感、以及对话框/设置页在放大后不被裁切。
 2. **发 1.3.2**：`AppScope/app.json5` 升 `versionName 1.3.2 / versionCode 1003002` → 构建 → 取**未签名** HAP 命名 `DBX_HarmonyOS_v1.3.2_dbx0.6.9_unsigned.hap` → 写 `RELEASE_NOTES_v1.3.2.md`（启动 3.09s→1.65s、局域网暴露修复、UI 缩放修复）→ 替换 release 资产（发版约定见「关键约束/发版」）。
    - 附加价值：**全新安装 = 冷缓存路径**，正好覆盖优化幅度最大、平时最难验的那条链路。
 3. ✅ **启动冒烟已脚本化（2026-09-13 完成）**：`harmony/tools/startup_smoke.sh`——`force-stop → hilog -r → aa start → 抓 25s 日志 → 12 条断言`（断言清单见「验证方式」）。用法：`--mode warm|cold|auto`、`--log <file>`（离线对历史日志重跑断言，不需要设备）、`--serial`；退出码 0/1/2。
@@ -167,13 +167,20 @@ node /storage/Users/currentUser/deveco_tools/hvigor/bin/hvigorw.js \
 - **`import lazy` 用于 `libdbx_ohos.so`**：46MB 的 `.so` 只在首次调用 `NativeBridge` 时 dlopen（API ≥ 12 直接可用）。`NativeBridge.isAvailable()` 内部 try/catch，加载失败降级 ArkTS 服务而不是中断启动。
 - **启动页隐藏**：`#root` 有子节点即隐藏（= Vue mount，早于 FCP）；兜底 `onPageEnd+400ms`，主题探测最多 10 次、硬上限 60 次。不要把隐藏时机改到"等 FCP"，那会更晚。
 
-### UI 缩放（2026-09-13 重做，推翻旧结论）
+### UI 缩放（2026-09-13 两次修正，别再走弯路）
 
-- **ArkWeb 有原生页面缩放**：`WebviewController.zoom(factor)`（API 9/11+，`factor` 是绝对倍率，1 = 100%）与 `zoomIn()/zoomOut()`；组件侧另有 `initialScale(percent)`。**必须 `.zoomAccess(true)`**，否则 `zoom()` 抛 `17100004 Function not enabled`。旧结论「ArkWeb 无 setZoom」是错的，正是它导致了下一段的 CSS 方案。
-- **绝不要用 CSS `zoom` 实现整页缩放**：`zoom` 只放大绘制，`vw/vh` 与 fixed 定位的包含块仍按**未缩放**视口计算，于是 125% 时整页往右溢出——实测工具栏右侧按钮被顶出窗口、和原生窗口按钮重合，设置按钮直接看不见（真机 HUAWEI MateBook Pro，2026-09-13）。要复制这个坏状态：`uinput -K -d 2072 -d 2058 -u 2058 -u 2072`（Ctrl+=）连按两次。
-- **现在的实现（native 侧，不用改 dist）**：web 侧 `App.vue` 仍先用 CSS `zoom` 兜底（真实浏览器路径），应用缩放后派发 `dbx:ui-scale-applied`；`Index.ets` 的 `uiScaleBridgeScript`（`javaScriptOnDocumentStart` 注入）监听该事件，调用 `dbxNativeWindow.setZoom(scale)` 并**撤掉** `<html>` 上的 CSS `zoom`。`WindowBridge.setZoom()` 返回 boolean，native 失败时脚本恢复 CSS zoom，避免"设置点了没反应"。
-- 代价：`zoomAccess(true)` 同时放开了手势缩放；下一次改缩放时会重新对齐。若将来要禁手势，得先找到不依赖 `zoomAccess` 的等效 API（`initialScale` 未验证）。
-- 相关：`AppToolbar.vue` 用 `reserved_inset / uiScale` 预留原生窗口按钮宽度，该换算式对原生缩放同样成立（CSS px 都被放大 uiScale 倍）。
+**结论：2-in-1 上没有可用的"浏览器式页面缩放"，只能用 CSS `zoom` + 视口单位补偿。**
+
+- ❌ **`WebviewController.zoom(factor)` 是视觉（手势）缩放，不是页面缩放**。真机实测（窗口 1101×734 CSS px）：`zoom(1.2)` 后 `window.innerWidth` 不变、`visualViewport.scale` 从 1 变到 1.1→1.32；表现为整页放大+平移（要看边缘得滑动），缩到 <1 会被"页面对齐宽度"卡住（等于没效果），放大后再复位还留着平移偏移（看起来"必须重启"）。而且必须 `zoomAccess(true)`。**不要再用它实现 UI 缩放。**
+- ❌ **`metaViewport(true)` + `initialScale(percent)` 在 2-in-1 上无效**：SDK 文档明确 "If the device is 2-in-1, the viewport property is not supported"，viewport meta 根本不解析。
+- ✅ **最终方案：CSS `zoom` on `<html>`（web 侧原有实现，能真正重排）+ 注入补偿样式**。CSS zoom 的唯一硬伤是视口单位不随缩放变化——`App.vue` 的壳是 `fixed inset-0 h-screen w-screen overflow-hidden`，zoom 后壳被撑成 `视口×z`，工具栏右侧按钮被顶出窗口、和窗口按钮重合。`Index.ets` 的 `uiScaleBridgeScript`（`javaScriptOnDocumentStart` 注入）在 `dbx:ui-scale-applied` 时把下列尺寸按 z 折算回窗口：
+  - `:root --dbx-viewport-height: calc(100vh / z)`（对话框的 max-height 用的就是它）
+  - `.h-screen / .w-screen / .min-h-screen / .max-h-screen` → `calc(100vh|100vw / z) !important`
+  - `[data-slot=dialog-content|dialog-positioner]` 的 max-width / max-height
+  回到 100% 时**整张注入样式表被删除**，完全交还给应用自己的 CSS（不残留 `--dbx-viewport-height` 覆盖）。
+- **不变量**（页面会打 `DBX-ZOOM` 日志；改这块务必复测）：任意档位下 `.fixed.inset-0` 壳的 right/bottom == 视口，`documentElement.scrollWidth/Height` == `clientWidth/Height`（无溢出），`visualViewport.scale` 恒为 1。
+- `.zoomAccess(false)`：不再用 `zoom()`，也避免手势缩放和这个设置打架。
+- 长期建议：补偿逻辑的"正统"位置是 `App.vue`（与 `isTauriRuntime` 分支并列），但改它要重建 dist（fork CI）；等下次同步上游/重建 dist 时挪进去，`uiScaleBridgeScript` 就能退化成纯日志。
 
 ### Rust 服务
 
@@ -378,7 +385,7 @@ $H shell "uitest dumpLayout -p /data/local/tmp/l.json" && $H file recv /data/loc
 
 - `dumpLayout` 顶层 `root` 的 bounds 就是应用窗口：`[0,0][3120,1961]` = 最大化；更小 = 浮动窗口（此时沉浸式工具栏不渲染，**看不到工具栏右侧按钮**，验缩放要在最大化下做）。
 - **注入的点击/按键落到最上层窗口**，且未聚焦窗口的第一次点击常常只聚焦不触发按钮（需要连点两次）。DBX 被别的窗口遮挡时，先把它点/切到前台再操作。
-- 判定缩放是否溢出：比较 `Web` 组件 bounds 与页面内容节点的 bounds，内容右边缘不应超过 Web 右边缘（`WebviewController.zoom()` 正确时相等；CSS `zoom` 时会超出）。
+- 判定 UI 缩放是否正确，别看"看起来变大了"：读页面自己打的 `DBX-ZOOM` 行（`dbx:ui-scale-applied` 后输出），要求 `shell=<视口宽>x<视口高>`（`.fixed.inset-0` 壳与视口一致）、`scroll == client`、`vvScale=1`。`WebviewController.zoom()` 的坏状态是 `vvScale≠1` 且 `inner` 不变。
 
 ---
 
@@ -392,8 +399,8 @@ $H shell "uitest dumpLayout -p /data/local/tmp/l.json" && $H file recv /data/loc
 - 仓库按 submodule 结构托管到 GitHub
 - 同步上游 v0.5.98（95 commits，冲突 1 处 + 回填 5 条路由）、v0.6.2（冲突 1 处）、v0.6.9（382 commits/1123 文件，冲突 2 处 + 回填 1 条路由）
 - HAP 产物重建流程落地（dist 走 fork CI、`.so` 本地构建）；JRE 解压改逐条目并跳过 symlink（沙箱 symlink EPERM）
-- UI 缩放：非 Tauri 运行时不再走 CSS `zoom`，改用 ArkWeb 原生页面缩放 `WebviewController.zoom()`
-  （2026-09-13 修正；旧结论「ArkWeb 无 setZoom」是错的，见「关键约束/UI 缩放」）
+- UI 缩放：CSS `zoom`（web 侧原有实现）**+ 视口单位补偿**，纯 native 侧注入，见「关键约束/UI 缩放」
+  （2026-09-13 两次修正：两度走弯路——先是「ArkWeb 无 setZoom」的错结论，后是误用实为视觉缩放的 `zoom()`）
 - **启动优化（2026-09-12/13，3.09s → 1.65s，-46%）**：见下面 8 条 + 附录 C 的否定结论
   1. 指纹判断跳过重复复制（`dbx-dist-fingerprint`）——顺带让 mtime 稳定、HTTP/代码缓存得以复用
   2. `/api/health` 短间隔起步退避（原固定 300ms）

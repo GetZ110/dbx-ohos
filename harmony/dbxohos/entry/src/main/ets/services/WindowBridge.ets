@@ -1,5 +1,4 @@
 import { uiAppearance, window } from '@kit.ArkUI';
-import { webview } from '@kit.ArkWeb';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { ConfigurationConstant, common } from '@kit.AbilityKit';
@@ -58,9 +57,6 @@ export class WindowBridge {
   // follows the *application* color mode, so this must always track the theme
   // the app is actually rendering — including in 'system' mode.
   private static lastAppliedColorMode: number = -1;
-  // WebviewController of the DBX Web component. Needed for the native page
-  // zoom that implements the web UI-scale setting (see setZoom).
-  private static webController: webview.WebviewController | null = null;
 
   /**
    * Called from EntryAbility once the main window is available.
@@ -183,50 +179,6 @@ export class WindowBridge {
       WindowBridge.lastSystemBarDark = null;
       hilog.warn(DOMAIN, TAG, 'setWindowSystemBarProperties failed: %{public}s', err.message);
     });
-  }
-
-  /**
-   * Called by Index.ets so the bridge can drive ArkWeb page zoom.
-   */
-  static attachWebController(controller: webview.WebviewController): void {
-    WindowBridge.webController = controller;
-  }
-
-  /**
-   * Applies the web UI scale (1 = 100%) as ArkWeb's native page zoom.
-   *
-   * Why not CSS `zoom` on <html> (the browser fallback the web layer still
-   * keeps): CSS zoom scales the painted output but leaves viewport-relative
-   * units and the fixed-position containing block at the unzoomed size, so at
-   * 125% the DBX toolbar grew past the window and its right-side actions
-   * collided with the native window buttons. ArkWeb's zoom() is a real page
-   * zoom: the layout viewport shrinks, so `vw` and `position: fixed` overlays
-   * follow along.
-   *
-   * Returns true when the native zoom was applied; JSProxy forwards that to the
-   * injected bridge script, which restores the CSS fallback on false.
-   */
-  setZoom(factor: number): boolean {
-    const controller = WindowBridge.webController;
-    if (!controller) {
-      hilog.warn(DOMAIN, TAG, 'setZoom ignored: no web controller attached');
-      return false;
-    }
-    if (!Number.isFinite(factor) || factor <= 0) {
-      hilog.warn(DOMAIN, TAG, 'setZoom ignored: invalid factor');
-      return false;
-    }
-    // ArkWeb accepts (0, 100]; keep the UI scale in a sane range too.
-    const clamped: number = Math.min(2, Math.max(0.5, factor));
-    try {
-      controller.zoom(clamped);
-      hilog.info(DOMAIN, TAG, 'ui scale applied: %{public}s', String(clamped));
-      return true;
-    } catch (err) {
-      const e = err as BusinessError;
-      hilog.warn(DOMAIN, TAG, 'zoom(%{public}s) failed: %{public}s', String(clamped), e.message);
-      return false;
-    }
   }
 
   /**
