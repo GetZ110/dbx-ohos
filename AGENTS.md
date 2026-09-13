@@ -23,7 +23,7 @@ dbx-ohos/                     # 父仓库，只有 main 一个分支，直接在
 
 ## 当前状态（2026-09-13）
 
-- **版本**：`AppScope/app.json5` = `versionName 1.3.1 / versionCode 1003001`；启动优化已进 `main`（父仓库 `bd10818`、submodule `0fd0f3074`），**但还没发版**（见「下一步任务 P0」）。
+- **版本**：`AppScope/app.json5` = `versionName 1.3.2 / versionCode 1003002`（2026-09-13 升版，发布准备已完成，**尚未发到 GitHub release**，见「下一步任务 P0」）。上游仍是 dbx v0.6.9。
 - **启动指标**（真机 HUAWEI MateBook Pro / HAD-W32，`force-stop` + `aa start`）：
 
   | 场景 | `frontend modules loaded` | 页内 FCP | 进程创建→FCP |
@@ -116,8 +116,9 @@ node /storage/Users/currentUser/deveco_tools/hvigor/bin/hvigorw.js \
 
 1. ✅ **UI 缩放已修复并经人工确认通过（2026-09-13）**：问题链与修法见「关键约束/UI 缩放」（初版 CSS `zoom` 整页右溢 → 误用实为视觉缩放的 `zoom()` → 最终 CSS `zoom` + 视口单位补偿 + 工具栏反向 zoom 固定尺寸 + 壳 min-size 归零）。纯 native 侧注入，不需要重建 dist。自动化不变量：0.75–1.9 全档 `shell = 视口`、`scroll == client`、`toolbar = 视口宽×40` 恒定、`vvScale = 1`；启动冒烟 12/12。
 1b. ⚠️ **缩放值是持久化的，但启动时落地两次**（2026-09-13 实测：清空日志后冷启、无任何按键，页面依次打 `DBX-ZOOM reset:1` → `applied:1.3`）——settings store 默认值先应用，随后异步水合出持久化值，因此启动瞬间有一帧未缩放的闪烁（旧结论"缩放不跨重启保留"是错的，别照它改）。想消掉闪烁需要把 uiScale 也镜像进原生 Preferences 并在 `documentStart` 就应用（theme 已有同款机制），属 P2 打磨，不影响 1.3.2。
-2. **发 1.3.2**：`AppScope/app.json5` 升 `versionName 1.3.2 / versionCode 1003002` → 构建 → 取**未签名** HAP 命名 `DBX_HarmonyOS_v1.3.2_dbx0.6.9_unsigned.hap` → 写 `RELEASE_NOTES_v1.3.2.md`（启动 3.09s→1.65s、局域网暴露修复、UI 缩放修复）→ 替换 release 资产（发版约定见「关键约束/发版」）。
-   - 附加价值：**全新安装 = 冷缓存路径**，正好覆盖优化幅度最大、平时最难验的那条链路。
+2. 🔶 **1.3.2 发布准备已完成，待发布（2026-09-13）**：`AppScope/app.json5` 已升 `1.3.2 / 1003002` → 重新打包（dist 与 `.so` 都是最新的，**没有**重跑 fork CI / Rust release）→ 未签名包内版本已核验为 1003002 → 归档 `release/DBX_HarmonyOS_v1.3.2_dbx0.6.9_unsigned.hap`（68,636,268 字节，SHA-256 `759f54ab…77b77`）→ 写了 `release/RELEASE_NOTES_v1.3.2.md`（启动 3.09s→1.65s、局域网暴露修复、UI 缩放修复，并注明"缩放值会记住但启动有一帧闪烁"）。该 RC 已装机（`bm dump` 确认 versionCode 1003002）并跑启动冒烟 12/12（317ms/1038ms）。
+   - **待办＝发布动作本身**：在 GitHub 新建 release（tag 建议 `v1.3.2-dbx0.6.9`），**只挂未签名包**，附 notes 全文；不要覆盖 v1.3.1 资产。发布前建议按发版约定的"全新安装 = 冷缓存路径"再走一遍安装验证。
+   - `release/` 在 `.gitignore` 里：包与 notes 不入 git，只作本地归档 + 后续上传 release 用。
 3. ✅ **启动冒烟已脚本化（2026-09-13 完成）**：`harmony/tools/startup_smoke.sh`——`force-stop → hilog -r → aa start → 抓 25s 日志 → 12 条断言`（断言清单见「验证方式」）。用法：`--mode warm|cold|auto`、`--log <file>`（离线对历史日志重跑断言，不需要设备）、`--serial`；退出码 0/1/2。
    - 理由：这一轮改的东西大多**错了会静默退化**——指纹判断错 → 用户一直用旧前端；缓存头丢 → 冷启动退回 3.8s；启动页隐藏逻辑错 → 闪白；gzip 门控失效 → 白烧 1s CPU。没有自动化只能靠人记。
    - 验证记录：真机三连（暖 293ms/991ms → `bm clean -c` 冷 1573ms/2656ms → 回温 296ms/1006ms）全部 12/12 PASS；离线负向测试确认冷日志在 `--mode warm` 下正确判 FAIL，注入 `Cannot read properties of undefined` 后正确判 FAIL。
@@ -205,7 +206,13 @@ node /storage/Users/currentUser/deveco_tools/hvigor/bin/hvigorw.js \
 ### 发版
 
 - **release 只挂未签名包**：签名 HAP 含 debug profile（绑定设备 UDID），不可公开发布。
-- 每次发版先把 `AppScope/app.json5` 的 `versionName`/`versionCode` 升到与 release 版本一致（当前基线 1.3.1 ↔ 1003001），再构建并替换 release 资产，保证未签名 hap 的包内版本与 release tag 对齐（2026-08-28、2026-09-10 均按此流程替换过资产）。
+- 每次发版先把 `AppScope/app.json5` 的 `versionName`/`versionCode` 升到与 release 版本一致（当前基线 1.3.2 ↔ 1003002；1.3.1 ↔ 1003001 是上一个已发布版本），再构建并替换 release 资产，保证未签名 hap 的包内版本与 release tag 对齐（2026-08-28、2026-09-10、2026-09-13 均按此流程）。
+- **核实包内版本**（打包后必查，`pack.info` 是 `version` 嵌套结构，不是平铺字段）：
+  ```bash
+  unzip -o -q <hap> pack.info module.json -d .tmp/hapcheck
+  python3 -c "import json;d=json.load(open('.tmp/hapcheck/pack.info'));print(d['summary']['app'])"
+  # → {'bundleName': 'com.dbx.ohos', 'version': {'code': 1003002, 'name': '1.3.2'}}
+  ```
 
 ## 同步上游（t8y2/dbx main → harmonyos-port）
 
