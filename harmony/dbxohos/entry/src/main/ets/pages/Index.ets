@@ -308,6 +308,13 @@ private windowInjectionScript: string =
     // the zoom (at 75% it used to shrink enough for the settings button to slide
     // under the native maximize button).
     '+"html .app-toolbar{zoom:"+(1/n)+";}"' +
+    // Floating layers (select/dropdown/popover/tooltip and reka dialogs) live in
+    // a popper wrapper that is positioned with coordinates floating-ui measured
+    // through getBoundingClientRect(), i.e. already in *zoomed* visual pixels.
+    // Without counter-zoom those coordinates get magnified a second time, so
+    // every popup drifts by (z-1) x its own position and far-right/far-bottom
+    // ones land outside the window (repro: settings UI-scale select at 130%).
+    '+"html [data-reka-popper-content-wrapper]{zoom:"+(1/n)+" !important;}"' +
     '+"html .h-screen{height:calc(100vh / "+n+") !important;}"' +
     '+"html .w-screen{width:calc(100vw / "+n+") !important;}"' +
     // App.vue's shell also carries Tailwind min-w-[760px] / min-h-[600px]. Once
@@ -323,6 +330,24 @@ private windowInjectionScript: string =
     'r.style.setProperty("zoom",String(n));' +
     'diag("applied:"+n);' +
     '}catch(e){}}' +
+    'function layer(tag){' +
+    'try{' +
+    'var q=function(sel){return document.querySelector(sel);};' +
+    'var f=function(el){if(!el)return "none";var b=el.getBoundingClientRect();var cs=getComputedStyle(el);' +
+    'return (el.getAttribute("data-slot")||el.tagName.toLowerCase())+" rect="+Math.round(b.left)+","+Math.round(b.top)+","+Math.round(b.right)+","+Math.round(b.bottom)+' +
+    '" pos="+cs.position+" zoom="+(cs.zoom||"1")+" op="+cs.opacity+" vis="+cs.visibility+" disp="+cs.display+" z="+cs.zIndex+" st="+(el.getAttribute("data-state")||"-");};' +
+    'var w=q("[data-reka-popper-content-wrapper]");var d=q("[data-slot=dialog-content]");var s=q("[data-slot=select-content]");' +
+    'if(w||d||s){' +
+    'var t=(s||d||w);var b=t.getBoundingClientRect();' +
+    'var hit=document.elementFromPoint(Math.round(b.left+b.width/2),Math.round(b.top+b.height/2));' +
+    'var hn=hit?(hit.getAttribute&&(hit.getAttribute("data-slot")||hit.tagName.toLowerCase())||"?"):"none";' +
+    'console.log("[DBX-LAYER] "+tag+" | wrapper: "+f(w)+" | dialog: "+f(d)+" | select: "+f(s)+" | hit="+hn);' +
+    '}' +
+    '}catch(e){}}' +
+    // Floating-layer inspector. Off by default; set DBX_DEBUG_LAYERS to true
+    // (one-line edit) when popover/dialog anchoring needs measuring again.
+    'var DBX_DEBUG_LAYERS=false;' +
+    'if(DBX_DEBUG_LAYERS)setInterval(function(){layer("poll");},2500);' +
     'window.addEventListener("dbx:ui-scale-applied",function(ev){' +
     'apply(ev&&ev.detail?ev.detail.scale:undefined);});' +
     '})();';
