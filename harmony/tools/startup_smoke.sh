@@ -15,6 +15,11 @@
 #   ./harmony/tools/startup_smoke.sh --serial 127.0.0.1:43817
 #   ./harmony/tools/startup_smoke.sh --log .tmp/xxx.log  # 只对已有日志做断言（不需要设备）
 #
+# 设备连接约定（重要）：
+#   先确认「本机连接情况」——`hdc list targets` 里已有的本机设备/模拟器优先，命中就不再 tconn；
+#   只有本机确实没有可用于鸿蒙测试的设备时，才回退到其他连接方式（网络 `hdc tconn <ip:port>`，
+#   默认 127.0.0.1:43817）。`--serial` 只用于在候选设备中选择 / 作为回退地址。
+#
 # 冷缓存场景制造（只清缓存、不动已保存的连接）：
 #   hdc shell "bm clean -c -n com.dbx.ohos"
 #
@@ -29,6 +34,8 @@ DEFAULT_SERIAL="127.0.0.1:43817"
 MODE="auto"
 LOG=""
 TIMEOUT=25
+SERIAL_EXPLICIT=0
+if [ -n "${HDC_TARGET:-}" ]; then SERIAL_EXPLICIT=1; fi
 SERIAL="${HDC_TARGET:-$DEFAULT_SERIAL}"
 ASSERT_ONLY=0
 KEEP=0
@@ -46,8 +53,8 @@ while [ $# -gt 0 ]; do
     --log=*)   LOG="${1#*=}"; shift ;;
     --timeout) TIMEOUT="${2:-}"; shift 2 ;;
     --timeout=*) TIMEOUT="${1#*=}"; shift ;;
-    --serial)  SERIAL="${2:-}"; shift 2 ;;
-    --serial=*) SERIAL="${1#*=}"; shift ;;
+    --serial)  SERIAL="${2:-}"; SERIAL_EXPLICIT=1; shift 2 ;;
+    --serial=*) SERIAL="${1#*=}"; SERIAL_EXPLICIT=1; shift ;;
     --keep)    KEEP=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "未知参数: $1" >&2; usage >&2; exit 2 ;;
@@ -119,36 +126,60 @@ else
   [ -n "$HDC" ] || { echo "找不到 hdc，请把 hdc 放进 PATH" >&2; exit 2; }
 
   echo "${c_dim}[smoke] hdc = $HDC${c_off}"
-  if ! "$HDC" list targets 2>/dev/null | grep -qv '^\[Empty\]$'; then
-    echo "[smoke] 设备列表为空，尝试连接 $SERIAL ..."
+
+  # 设备连接约定：先确认「本机连接情况」——本机已有的鸿蒙设备/模拟器优先；
+  # 本机确实没有可用于鸿蒙测试的设备时，才回退到其他连接方式（网络 tconn）。
+  list_targets() { "$HDC" list targets 2>/dev/null | grep -vE '^\[Empty\]$' | sed '/^[[:space:]]*$/d'; }
+  TARGETS="$(list_targets)"
+  TARGET=""
+  if [ -n "$TARGETS" ]; then
+    if [ "$SERIAL_EXPLICIT" = "1" ] && echo "$TARGETS" | grep -qx "$SERIAL"; then
+      TARGET="$SERIAL"
+    else
+      TARGET="$(echo "$TARGETS" | head -1)"
+    fi
+    echo "[smoke] 本机已有可用设备: $(echo "$TARGETS" | tr '\n' ' ')${c_dim}（优先使用，不再 tconn）${c_off}"
+  else
+    echo "[smoke] 本机未检测到可用于鸿蒙测试的设备/模拟器，回退到网络连接 $SERIAL ..."
     "$HDC" tconn "$SERIAL" >/dev/null 2>&1 || true
     sleep 2
+    TARGET="$(list_targets | head -1)"
   fi
-  if ! "$HDC" list targets 2>/dev/null | grep -qv '^\[Empty\]$'; then
-    echo "没有可用设备。先 hdc tconn $SERIAL（或先启动模拟器）。" >&2
+  if [ -z "$TARGET" ]; then
+    echo "本机没有可用于鸿蒙测试的设备，且网络连接 $SERIAL 未成功。" >&2
+    echo "请先在本机启动模拟器，或用 USB/本地 hdc 接入鸿蒙设备；" >&2
+    echo "确认本机不支持鸿蒙测试后，再考虑其他连接方式（hdc tconn <ip:port>）。" >&2
     exit 2
   fi
+  echo "${c_dim}[smoke] 目标设备: $TARGET${c_off}"
+
+  hdc_t() { "$HDC" -t "$TARGET" "$@"; }
 
   mkdir -p "$TMP_DIR"
   LOG="$TMP_DIR/startup_smoke_$(date +%Y%m%d_%H%M%S).log"
 
   echo "[smoke] force-stop $BUNDLE"
-  "$HDC" shell aa force-stop "$BUNDLE" >/dev/null 2>&1 || true
+  hdc_t shell aa force-stop "$BUNDLE" >/dev/null 2>&1 || true
   sleep 1
   echo "[smoke] hilog -r"
-  "$HDC" shell hilog -r >/dev/null 2>&1 || true
+  hdc_t shell hilog -r >/dev/null 2>&1 || true
 
   echo "[smoke] 开始抓日志 (${TIMEOUT}s) -> $LOG"
-  "$HDC" hilog > "$LOG" 2>/dev/null &
+  # 注意：这里必须直接执行 hdc（不要包进 shell 函数），否则 $! 是子 shell 的 PID，
+  # kill 只杀掉子 shell，真正的 hdc hilog 会变成孤儿进程继续往日志里追加。
+  "$HDC" -t "$TARGET" hilog > "$LOG" 2>/dev/null &
   HILOG_PID=$!
+  # 中断也不能留下孤儿 hdc hilog
+  trap 'kill "$HILOG_PID" 2>/dev/null || true' EXIT INT TERM
   sleep 2
 
   echo "[smoke] aa start -a $ABILITY -b $BUNDLE"
-  "$HDC" shell aa start -a "$ABILITY" -b "$BUNDLE" >/dev/null 2>&1 || true
+  hdc_t shell aa start -a "$ABILITY" -b "$BUNDLE" >/dev/null 2>&1 || true
 
   sleep "$TIMEOUT"
   kill "$HILOG_PID" 2>/dev/null || true
   wait "$HILOG_PID" 2>/dev/null || true
+  trap - EXIT INT TERM
   echo "${c_dim}[smoke] 采集结束，日志 $(wc -l < "$LOG") 行${c_off}"
 fi
 

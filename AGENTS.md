@@ -89,7 +89,7 @@ devecocli run --device 127.0.0.1:43817            # 构建+装机+启动
 devecocli run --skip-build --device 127.0.0.1:43817
 ```
 
-`devecocli` 是全局 npm 包 `@deveco-test/hmos-deveco-code`（bin: `/storage/Users/currentUser/.npm-global/bin/devecocli`，**不在默认 PATH**）。根目录 `dev-run.sh` 已封装环境变量与 PATH，直接 `./dev-run.sh [--skip-build]`。设备掉线时先 `hdc tconn 127.0.0.1:43817`。
+`devecocli` 是全局 npm 包 `@deveco-test/hmos-deveco-code`（bin: `/storage/Users/currentUser/.npm-global/bin/devecocli`，**不在默认 PATH**）。根目录 `dev-run.sh` 已封装环境变量与 PATH，直接 `./dev-run.sh [--skip-build]`。设备掉线时先 `hdc list targets` 确认本机连接情况；确实没有设备再 `hdc tconn 127.0.0.1:43817`（见「验证方式/测试设备连接顺序」）。
 
 裸 hvigor 构建（只需验 ArkTS 编译时最快，约 10s）：
 
@@ -305,6 +305,12 @@ cp target/release/libdbx_ohos.so ../../harmony/dbxohos/entry/libs/arm64-v8a/libd
 
 ## 验证方式
 
+### 测试设备连接顺序（约定）
+
+连接测试设备时**先确认本机连接情况**：`hdc list targets` 里已有的本机设备/模拟器优先，命中就直接使用，**不再 `hdc tconn`**。只有本机确实没有可用于鸿蒙测试的设备时，才考虑其他连接方式（网络 `hdc tconn <ip:port>`，本机 MateBook Pro 为 `127.0.0.1:43817`）。
+
+`startup_smoke.sh` 已按此顺序实现：本机有设备 → 打印「本机已有可用设备…（优先使用，不再 tconn）」并直接以 `-t <target>` 执行；本机无设备 → 打印回退提示后尝试 `tconn`；两者都不行才退出码 2，并提示「先在本机启动模拟器/USB 接入设备，确认本机不支持鸿蒙测试后再考虑其他连接」。
+
 ### 启动冒烟（已脚本化：`harmony/tools/startup_smoke.sh`）
 
 ```bash
@@ -313,7 +319,9 @@ cp target/release/libdbx_ohos.so ../../harmony/dbxohos/entry/libs/arm64-v8a/libd
 ./harmony/tools/startup_smoke.sh --log .tmp/xxx.log   # 离线对历史日志重跑断言（不需设备）
 ```
 
-设备掉线先 `hdc tconn 127.0.0.1:43817`；脚本也会自动尝试连接 `--serial`（默认 `127.0.0.1:43817`，可用 `HDC_TARGET` 覆盖）。默认 `--mode auto` 按实测自动分档：≤400ms 记 warm PASS，≤1700ms 记 WARN（冷缓存/偏慢），超过则判回归 FAIL。
+设备掉线时**先 `hdc list targets` 确认本机连接情况**，确实没有设备再 `hdc tconn 127.0.0.1:43817`（见上「测试设备连接顺序」）；脚本会按同一顺序处理，本机已有设备时不再 tconn。`--serial`（或 `HDC_TARGET`）默认 `127.0.0.1:43817`，只用于在候选设备中选择 / 作为回退地址。默认 `--mode auto` 按实测自动分档：≤400ms 记 warm PASS，≤1700ms 记 WARN（冷缓存/偏慢），超过则判回归 FAIL。
+
+> 改脚本时的坑：抓日志那行 `hdc hilog` 必须**直接执行**（`"$HDC" -t "$TARGET" hilog &`），不能包进 shell 函数——否则 `$!` 是子 shell 的 PID，`kill` 只杀子 shell，真正的 `hdc hilog` 变成孤儿进程持续往日志里追加，日志会被下一次启动的日志污染，离线断言随之误判为「加载了 2 次」。
 
 脚本内部等价于下面这段手测流程：
 
