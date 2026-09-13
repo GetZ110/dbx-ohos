@@ -255,11 +255,43 @@ private windowInjectionScript: string =
     'if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",patch);else patch();' +
     '})();';
 
+  // The web layer implements the UI-scale setting with CSS `zoom` on <html>
+  // when the runtime has no native zoom API (its browser fallback). ArkWeb does
+  // have one (WebviewController.zoom, enabled by zoomAccess(true)), and it is
+  // the correct one: CSS zoom leaves `vw`/fixed overlays at the unzoomed viewport
+  // width, so at 125% the toolbar ran past the window edge and its right-side
+  // buttons collided with the native window controls.
+  //
+  // This listener runs immediately after the web applies a scale: it moves the
+  // scaling to native page zoom and drops the CSS zoom. If the native call
+  // reports failure, the CSS zoom is restored so the setting still does
+  // something instead of silently doing nothing.
+  private uiScaleBridgeScript: string =
+    '(function(){' +
+    'if(window.__dbxUiScaleBridge)return;window.__dbxUiScaleBridge=true;' +
+    'function apply(scale){' +
+    'try{' +
+    'var n=parseFloat(scale);' +
+    'if(!isFinite(n)||n<=0)return;' +
+    'var b=window.dbxNativeWindow;' +
+    'if(!b||typeof b.setZoom!=="function")return;' +
+    'var r=document.documentElement;' +
+    'var ok=false;' +
+    'try{ok=b.setZoom(n)===true;}catch(e){ok=false;}' +
+    'if(ok){if(r)r.style.removeProperty("zoom");}' +
+    'else if(r){r.style.setProperty("zoom",String(n));}' +
+    '}catch(e){}}' +
+    'window.addEventListener("dbx:ui-scale-applied",function(ev){' +
+    'apply(ev&&ev.detail?ev.detail.scale:undefined);});' +
+    '})();';
+
   aboutToAppear(): void {
     // Keep ArkWeb DevTools/CDP off in normal builds; enable only for local profiling.
     if (AppConstants.ENABLE_WEB_DEBUG) {
       webview.WebviewController.setWebDebuggingAccess(true);
     }
+    // The UI-scale bridge needs the controller to call ArkWeb's page zoom.
+    WindowBridge.attachWebController(this.controller);
     ThemePrefs.init(getContext(this) as common.UIAbilityContext);
     const savedTheme: string = ThemePrefs.getPref('dbx-theme');
     this.refreshLoadingTheme();
@@ -405,7 +437,7 @@ private windowInjectionScript: string =
         .javaScriptProxy({
           object: this.windowBridge,
           name: 'dbxNativeWindow',
-          methodList: ['minimize', 'toggleMaximize', 'close', 'startMove', 'isMaximized', 'getBottomNavHeight', 'getTitleButtonReserveWidth', 'setDarkMode', 'setThemeModeFromWeb', 'setAppearanceFromWeb', 'syncSystemAppearance', 'getEffectiveAppearance', 'openExternal'],
+          methodList: ['minimize', 'toggleMaximize', 'close', 'startMove', 'isMaximized', 'getBottomNavHeight', 'getTitleButtonReserveWidth', 'setDarkMode', 'setThemeModeFromWeb', 'setAppearanceFromWeb', 'syncSystemAppearance', 'getEffectiveAppearance', 'openExternal', 'setZoom'],
           controller: this.controller
         })
         .javaScriptOnDocumentStart([{
@@ -426,10 +458,16 @@ private windowInjectionScript: string =
         }, {
           script: this.gridHeaderInScrollerScript,
           scriptRules: ['*']
+        }, {
+          script: this.uiScaleBridgeScript,
+          scriptRules: ['*']
         }])
         .onlineImageAccess(true)
         .fileAccess(true)
-        .zoomAccess(false)
+        // zoomAccess must stay true: WebviewController.zoom() (the UI-scale
+        // implementation) is a no-op otherwise. Side effect: ArkWeb also accepts
+        // pinch zoom again, which re-asserts itself on the next scale change.
+        .zoomAccess(true)
         .onPageBegin(() => {
           this.clearHideLoadingTimer();
           this.firstContentfulPaintReceived = false;
