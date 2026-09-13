@@ -14,7 +14,7 @@ dbx-ohos/                     # 父仓库，只有 main 一个分支，直接在
 │   └── dbx/            # git submodule → GetZ110/dbx 的 harmonyos-port 分支（上游 t8y2/dbx 的 fork）
 ├── harmony/
 │   └── dbxohos/        # HarmonyOS HAP 工程（DevEco 项目）
-├── harmony/tools/      # 构建后处理脚本（inject_modulepreload.py）
+├── harmony/tools/      # 构建后处理与验证脚本（inject_modulepreload.py、startup_smoke.sh）
 ├── AGENTS.md           # 本文件
 └── README.md
 ```
@@ -32,6 +32,7 @@ dbx-ohos/                     # 父仓库，只有 main 一个分支，直接在
   | 冷缓存（`bm clean -c` / 新装或更新后首次） | **1456–1589ms** | ~2.7s | **3.8s** |
 
   优化前基线：稳态 `frontend modules loaded` 1.73s、FCP 3.09s。已完成的 8 项优化与根因见附录 A/C。
+- **启动冒烟已脚本化**：`harmony/tools/startup_smoke.sh`（2026-09-13 真机三连通过：暖 293ms/991ms → 冷 1573ms/2656ms → 回温 296ms/1006ms；见「验证方式」）。
 - **结论**：Web 侧冷路径的可回收空间基本见底（附录 C 有两项"看起来能省但实测不成立"的记录）。下一步按「下一步任务」的优先级走。
 
 ## 关键架构（启动链路）
@@ -62,6 +63,7 @@ dbx-ohos/                     # 父仓库，只有 main 一个分支，直接在
 | `harmony/dbxohos/entry/src/main/ets/services/ThemePrefs.ets` | 原生 Preferences（主题 + dist 指纹） |
 | `harmony/dbxohos/entry/src/main/ets/services/WebPrefsBridge.ets` | 暴露给 Web 的 `dbxNativePrefs` JS 桥 |
 | `harmony/tools/inject_modulepreload.py` | 给构建产物 `index.html` 注入启动闭包 `modulepreload`（**替换 dist 后必须重跑**） |
+| `harmony/tools/startup_smoke.sh` | 启动冒烟：`force-stop → hilog -r → aa start → 抓 25s → 12 条断言`。`--mode warm\|cold\|auto`、`--log`（离线重跑断言，不需设备）、`--serial`；退出码 0/1/2 |
 
 ## 构建命令
 
@@ -109,13 +111,14 @@ node /storage/Users/currentUser/deveco_tools/hvigor/bin/hvigorw.js \
 
 ## 下一步任务（按优先级，2026-09-13 排定）
 
-### P0 收口：验最后一处 + 发 1.3.2 + 加启动冒烟脚本（1–2 天）
+### P0 收口：验最后一处 + 发 1.3.2（1–2 天）
 
 1. **手动验证 OHOS 上的 UI 缩放**（唯一未验项）：设置里把「界面缩放」改成非 100%，确认整页 CSS `zoom` 实时生效（`App.vue` 的 `applyUiScaleWithCss`；自动化测不了）。
 2. **发 1.3.2**：`AppScope/app.json5` 升 `versionName 1.3.2 / versionCode 1003002` → 构建 → 取**未签名** HAP 命名 `DBX_HarmonyOS_v1.3.2_dbx0.6.9_unsigned.hap` → 写 `RELEASE_NOTES_v1.3.2.md`（启动 3.09s→1.65s、局域网暴露修复、UI 缩放修复）→ 替换 release 资产（发版约定见「关键约束/发版」）。
    - 附加价值：**全新安装 = 冷缓存路径**，正好覆盖优化幅度最大、平时最难验的那条链路。
-3. **加 `harmony/tools/startup_smoke.sh`**：`force-stop → hilog -r → aa start → 抓 25s 日志 → 断言`（断言清单见「验证方式」）。
+3. ✅ **启动冒烟已脚本化（2026-09-13 完成）**：`harmony/tools/startup_smoke.sh`——`force-stop → hilog -r → aa start → 抓 25s 日志 → 12 条断言`（断言清单见「验证方式」）。用法：`--mode warm|cold|auto`、`--log <file>`（离线对历史日志重跑断言，不需要设备）、`--serial`；退出码 0/1/2。
    - 理由：这一轮改的东西大多**错了会静默退化**——指纹判断错 → 用户一直用旧前端；缓存头丢 → 冷启动退回 3.8s；启动页隐藏逻辑错 → 闪白；gzip 门控失效 → 白烧 1s CPU。没有自动化只能靠人记。
+   - 验证记录：真机三连（暖 293ms/991ms → `bm clean -c` 冷 1573ms/2656ms → 回温 296ms/1006ms）全部 12/12 PASS；离线负向测试确认冷日志在 `--mode warm` 下正确判 FAIL，注入 `Cannot read properties of undefined` 后正确判 FAIL。
 
 ### P1 二选一（按真实痛点）
 
@@ -302,7 +305,17 @@ cp target/release/libdbx_ohos.so ../../harmony/dbxohos/entry/libs/arm64-v8a/libd
 
 ## 验证方式
 
-### 启动冒烟断言（建议脚本化，见「下一步任务 P0」）
+### 启动冒烟（已脚本化：`harmony/tools/startup_smoke.sh`）
+
+```bash
+./harmony/tools/startup_smoke.sh --mode warm          # 稳态，严格阈值（≤400ms / ≤1.3s）
+./harmony/tools/startup_smoke.sh --mode cold          # bm clean -c 之后（≤1700ms / ≤3.0s）
+./harmony/tools/startup_smoke.sh --log .tmp/xxx.log   # 离线对历史日志重跑断言（不需设备）
+```
+
+设备掉线先 `hdc tconn 127.0.0.1:43817`；脚本也会自动尝试连接 `--serial`（默认 `127.0.0.1:43817`，可用 `HDC_TARGET` 覆盖）。默认 `--mode auto` 按实测自动分档：≤400ms 记 warm PASS，≤1700ms 记 WARN（冷缓存/偏慢），超过则判回归 FAIL。
+
+脚本内部等价于下面这段手测流程：
 
 ```bash
 hdc shell aa force-stop com.dbx.ohos; sleep 1
