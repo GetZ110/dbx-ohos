@@ -23,7 +23,7 @@ dbx-ohos/                     # 父仓库，只有 main 一个分支，直接在
 
 ## 当前状态（2026-09-13）
 
-- **版本**：`AppScope/app.json5` = `versionName 1.3.2 / versionCode 1003002`，**已于 2026-09-13 发布到 GitHub release**（tag `v1.3.2-dbx0.6.9`，Latest）。上游仍是 dbx v0.6.9。
+- **版本**：`AppScope/app.json5` = `versionName 1.3.3 / versionCode 1003003`，**已于 2026-09-13 发布到 GitHub release**（tag `v1.3.3-dbx0.6.9`，Latest；hotfix：结果表格第一行被表头压住 + 切 Canvas 丢表头）。上一版是 `1.3.2 / 1003002`（tag `v1.3.2-dbx0.6.9`，资产未被覆盖）。上游仍是 dbx v0.6.9，dist/.so 未重建。
 - **启动指标**（真机 HUAWEI MateBook Pro / HAD-W32，`force-stop` + `aa start`）：
 
   | 场景 | `frontend modules loaded` | 页内 FCP | 进程创建→FCP |
@@ -120,6 +120,7 @@ node /storage/Users/currentUser/deveco_tools/hvigor/bin/hvigorw.js \
    - 发布前链路：`AppScope/app.json5` 升 `1.3.2 / 1003002` → 重新打包（dist 与 `.so` 都是最新的，**没有**重跑 fork CI / Rust release）→ 未签名包内版本核验为 1003002 → 归档 + 写 `release/RELEASE_NOTES_v1.3.2.md`（含「已验证」小节，正文即 release body）→ 装机跑启动冒烟 12/12 → 人工确认 130% 下弹层锚定且内容跟随缩放。
    - 中途因缩放相关的两个 bug 各重新打包一次，均**覆盖同名资产**：① 弹层漂移/跑出窗口；② 上一版修复把弹层内容也抵消成"不跟随缩放、始终固定大小"（改为 wrapper 抵消定位 + 子元素恢复缩放）。最终字节 68,638,143 / SHA-256 `79bd458c…47e90`，已与线上 digest 核对一致。
    - `release/` 在 `.gitignore` 里：包与 notes 不入 git，只作本地归档 + 上传 release 用。
+2b. ✅ **1.3.3 已发布（2026-09-13，hotfix）**：修复「结果表格第一行被表头压住」与「切 Canvas 渲染模式丢表头」两个用户可见问题（根因见「关键约束/数据表格表头注入」）。链路：`AppScope/app.json5` 升 `1.3.3 / 1003003` → 打包（**只改了 ArkTS 注入脚本，dist 与 `.so` 未重建**）→ 未签名包内版本核验 1003003 → 归档 `release/DBX_HarmonyOS_v1.3.3_dbx0.6.9_unsigned.hap`（68,640,949 字节，SHA-256 `2426e15e…fedcbb6`，与线上 digest 一致）+ `RELEASE_NOTES_v1.3.3.md` → 装机启动冒烟 12/12 PASS → `gh release create`（`--target main`，tag 指向版本提交 `deab2fd`）。v1.3.2 资产未被覆盖。
 3. ✅ **启动冒烟已脚本化（2026-09-13 完成）**：`harmony/tools/startup_smoke.sh`——`force-stop → hilog -r → aa start → 抓 25s 日志 → 12 条断言`（断言清单见「验证方式」）。用法：`--mode warm|cold|auto`、`--log <file>`（离线对历史日志重跑断言，不需要设备）、`--serial`；退出码 0/1/2。
    - 理由：这一轮改的东西大多**错了会静默退化**——指纹判断错 → 用户一直用旧前端；缓存头丢 → 冷启动退回 3.8s；启动页隐藏逻辑错 → 闪白；gzip 门控失效 → 白烧 1s CPU。没有自动化只能靠人记。
    - 验证记录：真机三连（暖 293ms/991ms → `bm clean -c` 冷 1573ms/2656ms → 回温 296ms/1006ms）全部 12/12 PASS；离线负向测试确认冷日志在 `--mode warm` 下正确判 FAIL，注入 `Cannot read properties of undefined` 后正确判 FAIL。
@@ -190,6 +191,15 @@ node /storage/Users/currentUser/deveco_tools/hvigor/bin/hvigorw.js \
 - `.zoomAccess(false)`：不再用 `zoom()`，也避免手势缩放和这个设置打架。
 - 长期建议：补偿逻辑的"正统"位置是 `App.vue`（与 `isTauriRuntime` 分支并列），但改它要重建 dist（fork CI）；等下次同步上游/重建 dist 时挪进去，`uiScaleBridgeScript` 就能退化成纯日志。
 
+### 数据表格表头注入（DOM 渲染模式，2026-09-13 两处修复）
+
+`Index.ets` 的 `gridHeaderInScrollerScript` 把 `.data-grid-header-shell` **搬进** `.data-grid-scroller` 做 sticky 表头（让表头与数据行在合成器上同步滚动，替代 dbx 每帧 `headerRef.scrollLeft = ...` 的 JS 同步；Canvas 模式 `canvas-grid-scroller` 直接跳过）。搬 Vue 拥有的节点有两个坑，都是用户报过的：
+
+- **绝不写死表头高度**：表头真实高度跟渲染行数走（只有列名 28px；带 `int/TEXT` 类型行或注释行约 40px）。原先注入里 `minHeight/height = "28px"`，加上 `overflow: visible`，40px 的表头行会向下溢出 12px 压住第一行数据（现象：第一行的数字/文字被切掉上半）。现在只让内容决定高度。**排查手法**：CDP 读 `.data-grid-header-shell` 的 `getBoundingClientRect()` 与内联 `style`，再看第一行 `[data-row-index="0"]` 的 `top` 是否等于 shell 的 `bottom`，并在第一行顶部做 `document.elementFromPoint` —— 命中表头单元格即说明又被压住了。
+- **搬迁必须可逆**：切到 Canvas 渲染模式时，Vue 的 patch 会移除 DOM 分支容器（`.relative.min-h-0.flex-1`），被搬进去的 shell 随之被摘出文档，表现为「表头消失、要重开标签页才回来」。脚本因此记录 shell 的原父节点（`moved` WeakMap），离开 DOM 模式或节点被摘除时放回原位并清空注入样式（`clearStyles` 含 `background/position/top/zIndex/width/overflow/boxShadow/visibility/flexShrink/minHeight/height`）。
+- **放回要早于下一帧**：还原若只挂在 250ms 防抖的 `applyAll` 上，切模式时表头会先消失约 0.5s。现在 MutationObserver 回调里先跑 `healDetached()`（microtask，早于绘制），实测 DOM↔Canvas 反复切换 **0 帧**缺表头。
+- 已知外观差异（未修，用户已确认不影响使用）：Canvas 网格底色取 `--background`（xcode 主题 `rgb(250,252,255)`），DOM 网格根是上游写死的白色，所以最后一列右侧空白区在 Canvas 下带一层约 5/255 的浅灰，看起来像表头多延伸一截。
+
 ### Rust 服务
 
 - **不要用 `aws-lc-rs`**：OHOS 目标链接失败；TLS 相关 crate 已切到 `ring`（`rustls`、`russh`、`mysql_async`）。
@@ -210,12 +220,13 @@ node /storage/Users/currentUser/deveco_tools/hvigor/bin/hvigorw.js \
 ### 发版
 
 - **release 只挂未签名包**：签名 HAP 含 debug profile（绑定设备 UDID），不可公开发布。
-- 每次发版先把 `AppScope/app.json5` 的 `versionName`/`versionCode` 升到与 release 版本一致（当前基线 1.3.2 ↔ 1003002；1.3.1 ↔ 1003001 是上一个已发布版本），再构建并替换 release 资产，保证未签名 hap 的包内版本与 release tag 对齐（2026-08-28、2026-09-10、2026-09-13 均按此流程）。
+- 每次发版先把 `AppScope/app.json5` 的 `versionName`/`versionCode` 升到与 release 版本一致（当前基线 1.3.3 ↔ 1003003；1.3.2 ↔ 1003002 是上一个已发布版本），再构建并替换 release 资产，保证未签名 hap 的包内版本与 release tag 对齐（2026-08-28、2026-09-10、2026-09-13 均按此流程）。
+- **tag 与 release 一起建**：`gh release create <tag> --target main --latest`（本次 `v1.3.3-dbx0.6.9` → 版本提交 `deab2fd`）；建完在父仓库 `git fetch --tags origin` 把 tag 同步到本地，并用 `gh release view --json assets` 核对线上 digest 与本地 `sha256sum` 一致。
 - **核实包内版本**（打包后必查，`pack.info` 是 `version` 嵌套结构，不是平铺字段）：
   ```bash
   unzip -o -q <hap> pack.info module.json -d .tmp/hapcheck
   python3 -c "import json;d=json.load(open('.tmp/hapcheck/pack.info'));print(d['summary']['app'])"
-  # → {'bundleName': 'com.dbx.ohos', 'version': {'code': 1003002, 'name': '1.3.2'}}
+  # → {'bundleName': 'com.dbx.ohos', 'version': {'code': 1003003, 'name': '1.3.3'}}
   ```
 
 ## 同步上游（t8y2/dbx main → harmonyos-port）
