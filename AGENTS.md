@@ -114,7 +114,7 @@ node /storage/Users/currentUser/deveco_tools/hvigor/bin/hvigorw.js \
 
 ### P0 收口：验最后一处 + 发 1.3.2（1–2 天）
 
-1. **UI 缩放：已修复，待人工目视确认（2026-09-13，两次返工）**：问题是 125% 时整页右溢（工具栏右侧按钮被顶出窗口、与窗口按钮重合）。先误判为"ArkWeb 缺缩放 API"而加了 native `zoom()`，真机证明那是视觉缩放（放大+平移、缩不小、复位要重启）；最终定为 **CSS `zoom` + 视口单位补偿**（见「关键约束/UI 缩放」；纯 native 侧注入，不需要重建 dist）。已实测 0.75 / 0.9 / 1.0 / 1.1–1.5 各档：壳尺寸 == 视口、`scroll == client`、`visualViewport.scale` 恒为 1，120% 与 75% 截图中工具栏右侧图标与窗口按钮互不重叠、面板与卡片完整；启动冒烟 12/12。**待办**：人工确认设置里 125% 的观感、以及对话框/设置页在放大后不被裁切。
+1. **UI 缩放：已修复三轮，待人工目视确认（2026-09-13）**：① 初版 CSS `zoom` 整页右溢；② 误用 `zoom()`（真机证明是视觉缩放：放大+平移、缩不小、复位要重启）；③ 现版本 CSS `zoom` + 视口单位补偿，并额外修了两处——**工具栏反向 zoom 保持固定尺寸**（系统窗口按钮固定、工具栏跟着缩放不协调；且 reserve padding 被放大 z 倍导致 75% 时设置按钮压到最大化按钮）、**壳的 `min-w/min-h` 在缩放期间归零**（否则 z≥1.45 时壳被 min-width 撑回 760×z 又溢出）。见「关键约束/UI 缩放」；纯 native 侧注入，不需要重建 dist。已实测 0.75–1.9 全档：壳 = 视口、`scroll == client`、`toolbar = 视口宽×40` 恒定、`vvScale = 1`；启动冒烟 12/12。**待办**：人工确认 125% 的实际观感、对话框/设置页是否被裁、以及内容区缩放与固定工具栏的搭配是否可接受。
 2. **发 1.3.2**：`AppScope/app.json5` 升 `versionName 1.3.2 / versionCode 1003002` → 构建 → 取**未签名** HAP 命名 `DBX_HarmonyOS_v1.3.2_dbx0.6.9_unsigned.hap` → 写 `RELEASE_NOTES_v1.3.2.md`（启动 3.09s→1.65s、局域网暴露修复、UI 缩放修复）→ 替换 release 资产（发版约定见「关键约束/发版」）。
    - 附加价值：**全新安装 = 冷缓存路径**，正好覆盖优化幅度最大、平时最难验的那条链路。
 3. ✅ **启动冒烟已脚本化（2026-09-13 完成）**：`harmony/tools/startup_smoke.sh`——`force-stop → hilog -r → aa start → 抓 25s 日志 → 12 条断言`（断言清单见「验证方式」）。用法：`--mode warm|cold|auto`、`--log <file>`（离线对历史日志重跑断言，不需要设备）、`--serial`；退出码 0/1/2。
@@ -173,12 +173,14 @@ node /storage/Users/currentUser/deveco_tools/hvigor/bin/hvigorw.js \
 
 - ❌ **`WebviewController.zoom(factor)` 是视觉（手势）缩放，不是页面缩放**。真机实测（窗口 1101×734 CSS px）：`zoom(1.2)` 后 `window.innerWidth` 不变、`visualViewport.scale` 从 1 变到 1.1→1.32；表现为整页放大+平移（要看边缘得滑动），缩到 <1 会被"页面对齐宽度"卡住（等于没效果），放大后再复位还留着平移偏移（看起来"必须重启"）。而且必须 `zoomAccess(true)`。**不要再用它实现 UI 缩放。**
 - ❌ **`metaViewport(true)` + `initialScale(percent)` 在 2-in-1 上无效**：SDK 文档明确 "If the device is 2-in-1, the viewport property is not supported"，viewport meta 根本不解析。
-- ✅ **最终方案：CSS `zoom` on `<html>`（web 侧原有实现，能真正重排）+ 注入补偿样式**。CSS zoom 的唯一硬伤是视口单位不随缩放变化——`App.vue` 的壳是 `fixed inset-0 h-screen w-screen overflow-hidden`，zoom 后壳被撑成 `视口×z`，工具栏右侧按钮被顶出窗口、和窗口按钮重合。`Index.ets` 的 `uiScaleBridgeScript`（`javaScriptOnDocumentStart` 注入）在 `dbx:ui-scale-applied` 时把下列尺寸按 z 折算回窗口：
+- ✅ **最终方案：CSS `zoom` on `<html>`（web 侧原有实现，能真正重排）+ 注入补偿样式**。CSS zoom 的硬伤是视口单位不随缩放变化，`App.vue` 的壳是 `fixed inset-0 h-screen w-screen overflow-hidden`。`Index.ets` 的 `uiScaleBridgeScript`（`javaScriptOnDocumentStart` 注入）在 `dbx:ui-scale-applied` 时把这些折算回窗口：
   - `:root --dbx-viewport-height: calc(100vh / z)`（对话框的 max-height 用的就是它）
   - `.h-screen / .w-screen / .min-h-screen / .max-h-screen` → `calc(100vh|100vw / z) !important`
+  - **`.h-screen.w-screen` 的 `min-width/min-height` 归零**：内层壳还带 Tailwind `min-w-[760px] min-h-[600px]`，补偿后壳宽 `100vw/z` 一旦小于它，最小值反而把壳撑回 `760×z` 而溢出（实测 z=1.5 → 1140px、z=1.6 → 1216px，视口只有 1101px）。缩放期间必须放开最小值，让布局真正重排进窗口。
+  - **`.app-toolbar` 反向 zoom `1/z`**：工具栏在 OHOS 上就是标题栏，紧邻的系统窗口按钮是固定尺寸，所以工具栏**不应该**跟着设置缩放（否则 125% 时明显不协调，且 `getTitleButtonReserveWidth()` 那段 `padding-right` 会被放大 z 倍——z=1.5 留白过大、z=0.75 留白只剩 0.75 倍，设置按钮会压到最大化按钮上）。反向 zoom 让净缩放 = 1：字号清晰、尺寸恒定、预留宽度也恒定。内容区照常缩放。
   - `[data-slot=dialog-content|dialog-positioner]` 的 max-width / max-height
-  回到 100% 时**整张注入样式表被删除**，完全交还给应用自己的 CSS（不残留 `--dbx-viewport-height` 覆盖）。
-- **不变量**（页面会打 `DBX-ZOOM` 日志；改这块务必复测）：任意档位下 `.fixed.inset-0` 壳的 right/bottom == 视口，`documentElement.scrollWidth/Height` == `clientWidth/Height`（无溢出），`visualViewport.scale` 恒为 1。
+  回到 100% 时**整张注入样式表被删除**，完全交还给应用自己的 CSS（不残留 `--dbx-viewport-height`、min-size、toolbar zoom 覆盖）。
+- **不变量**（页面会打 `DBX-ZOOM` 日志；改这块务必复测）：任意档位（实测 0.75–1.9）下 `.fixed.inset-0` 壳的 right/bottom == 视口、`documentElement.scrollWidth/Height` == `clientWidth/Height`、`.app-toolbar` 恒为 `视口宽×40`、`visualViewport.scale` 恒为 1。
 - `.zoomAccess(false)`：不再用 `zoom()`，也避免手势缩放和这个设置打架。
 - 长期建议：补偿逻辑的"正统"位置是 `App.vue`（与 `isTauriRuntime` 分支并列），但改它要重建 dist（fork CI）；等下次同步上游/重建 dist 时挪进去，`uiScaleBridgeScript` 就能退化成纯日志。
 
@@ -385,7 +387,7 @@ $H shell "uitest dumpLayout -p /data/local/tmp/l.json" && $H file recv /data/loc
 
 - `dumpLayout` 顶层 `root` 的 bounds 就是应用窗口：`[0,0][3120,1961]` = 最大化；更小 = 浮动窗口（此时沉浸式工具栏不渲染，**看不到工具栏右侧按钮**，验缩放要在最大化下做）。
 - **注入的点击/按键落到最上层窗口**，且未聚焦窗口的第一次点击常常只聚焦不触发按钮（需要连点两次）。DBX 被别的窗口遮挡时，先把它点/切到前台再操作。
-- 判定 UI 缩放是否正确，别看"看起来变大了"：读页面自己打的 `DBX-ZOOM` 行（`dbx:ui-scale-applied` 后输出），要求 `shell=<视口宽>x<视口高>`（`.fixed.inset-0` 壳与视口一致）、`scroll == client`、`vvScale=1`。`WebviewController.zoom()` 的坏状态是 `vvScale≠1` 且 `inner` 不变。
+- 判定 UI 缩放是否正确，别看"看起来变大了"：读页面自己打的 `DBX-ZOOM` 行（`dbx:ui-scale-applied` 后输出），要求 `shell=<视口宽>x<视口高>`（`.fixed.inset-0` 壳与视口一致）、`scroll == client`、`toolbar=<视口宽>x40` 恒定、`vvScale=1`。`WebviewController.zoom()` 的坏状态是 `vvScale≠1` 且 `inner` 不变；CSS zoom 漏补偿的坏状态是 `toolbar` 宽随档位变化（z≥1.45 时曾被内层 `min-w-[760px]` 撑到 1140/1216）。
 
 ---
 

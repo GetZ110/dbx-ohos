@@ -285,9 +285,11 @@ private windowInjectionScript: string =
     'try{' +
     'var r=document.documentElement;var vv=window.visualViewport;' +
     'var w=document.querySelector(".fixed.inset-0");var wr=w?w.getBoundingClientRect():null;' +
+    'var tb=document.querySelector(".app-toolbar");var tr=tb?tb.getBoundingClientRect():null;' +
     'console.log("[DBX-ZOOM] "+tag+" vp="+window.innerWidth+"x"+window.innerHeight' +
     '+" scroll="+r.scrollWidth+"x"+r.scrollHeight+" zoom="+(r.style.zoom||"none")' +
     '+" shell="+(wr?Math.round(wr.right)+"x"+Math.round(wr.bottom):"-")' +
+    '+" toolbar="+(tr?Math.round(tr.width)+"x"+Math.round(tr.height):"-")' +
     '+" vvScale="+(vv?vv.scale:-1));' +
     '}catch(e){}}' +
     'function apply(scale){' +
@@ -298,8 +300,23 @@ private windowInjectionScript: string =
     'if(Math.abs(n-1)<0.0001){r.style.removeProperty("zoom");dropStyle();diag("reset:1");return;}' +
     'styleEl().textContent=' +
     '":root{--dbx-viewport-height:calc(100vh / "+n+");}"' +
+    // The app toolbar is the window title bar on OHOS: the OS window buttons
+    // next to it are drawn at a fixed size, so the toolbar must not scale with
+    // the UI setting either. Counter-zoom cancels the page zoom exactly
+    // (net scale 1 -> crisp, native-size chrome), which also keeps the
+    // title-button reserve padding constant instead of growing/shrinking with
+    // the zoom (at 75% it used to shrink enough for the settings button to slide
+    // under the native maximize button).
+    '+"html .app-toolbar{zoom:"+(1/n)+";}"' +
     '+"html .h-screen{height:calc(100vh / "+n+") !important;}"' +
     '+"html .w-screen{width:calc(100vw / "+n+") !important;}"' +
+    // App.vue's shell also carries Tailwind min-w-[760px] / min-h-[600px]. Once
+    // the compensated shell (100vw / n) shrinks below those, the minimum wins
+    // and the shell grows past the window again (measured: n=1.5 -> 1140px on a
+    // 1101px viewport, n=1.6 -> 1216px). Drop the minimums while zoomed so the
+    // layout reflows into the window instead; at 100% the whole stylesheet is
+    // removed, so the app's own minimum applies untouched.
+    '+"html .h-screen.w-screen{min-width:0 !important;min-height:0 !important;}"' +
     '+"html .min-h-screen{min-height:calc(100vh / "+n+") !important;}"' +
     '+"html .max-h-screen{max-height:calc(100vh / "+n+") !important;}"' +
     '+"html [data-slot=dialog-content],html [data-slot=dialog-positioner]{max-width:calc(100vw / "+n+" - 2rem) !important;max-height:calc(100vh / "+n+" - 2rem) !important;}";' +
