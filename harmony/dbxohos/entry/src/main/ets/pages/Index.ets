@@ -314,7 +314,12 @@ private windowInjectionScript: string =
     // Without counter-zoom those coordinates get magnified a second time, so
     // every popup drifts by (z-1) x its own position and far-right/far-bottom
     // ones land outside the window (repro: settings UI-scale select at 130%).
+    // Counter-zoom the wrapper so 1 visual px == 1 CSS px for *positioning*, then
+    // re-apply the page zoom on its child so the popup itself still scales with
+    // the rest of the UI (counter-zooming the whole subtree left popups pinned at
+    // 100% size, which is just as wrong as the drift).
     '+"html [data-reka-popper-content-wrapper]{zoom:"+(1/n)+" !important;}"' +
+    '+"html [data-reka-popper-content-wrapper]>*{zoom:"+n+" !important;}"' +
     '+"html .h-screen{height:calc(100vh / "+n+") !important;}"' +
     '+"html .w-screen{width:calc(100vw / "+n+") !important;}"' +
     // App.vue's shell also carries Tailwind min-w-[760px] / min-h-[600px]. Once
