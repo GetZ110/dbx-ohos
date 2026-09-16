@@ -1,6 +1,6 @@
 {
   "app": {
-    "bundleName": "com.dbx.ohos",
+    "bundleName": "io.github.getz110.dbx",
     "vendor": "dbx",
     "versionCode": 1003003,
     "versionName": "1.3.3",

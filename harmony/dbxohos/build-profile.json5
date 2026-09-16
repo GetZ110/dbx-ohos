@@ -4,13 +4,13 @@
       {
         "name": "default",
         "material": {
-          "storePassword": "000000207392FF7C7EDFCCA70C25B0D899DC2BBB2E7FB83CE5875BCCD149B48BFE592DAD7E75A3F007462EC82B56481C",
-          "certpath": "/storage/Users/currentUser/Documents/ohos/config/default_dbxohosDCQllQg3vSmU7HWBz_b0FqKAqID35U9XdJqM9Npn_1A.cer",
+          "storePassword": "0000002040C8222868338C579D16C75D685EE11B815D437F5BA19DAC3A997DAB2A82DF86615679136A8F3CAC95C451D7",
+          "certpath": "/storage/Users/currentUser/Documents/ohos/config/default_dbxohosdUZI6Tr9cHl_4UaRvJYTYdNNEYSb0rK5vsYaH3PWw2Q.cer",
           "keyAlias": "debugKey",
-          "keyPassword": "000000207392FF7C7EDFCCA70C25B0D899DC2BBB2E7FB83CE5875BCCD149B48BFE592DAD7E75A3F007462EC82B56481C",
-          "profile": "/storage/Users/currentUser/Documents/ohos/config/default_dbxohosDCQllQg3vSmU7HWBz_b0FqKAqID35U9XdJqM9Npn_1A.p7b",
+          "keyPassword": "0000002040C8222868338C579D16C75D685EE11B815D437F5BA19DAC3A997DAB2A82DF86615679136A8F3CAC95C451D7",
+          "profile": "/storage/Users/currentUser/Documents/ohos/config/default_dbxohosdUZI6Tr9cHl_4UaRvJYTYdNNEYSb0rK5vsYaH3PWw2Q.p7b",
           "signAlg": "SHA256withECDSA",
-          "storeFile": "/storage/Users/currentUser/Documents/ohos/config/default_dbxohosDCQllQg3vSmU7HWBz_b0FqKAqID35U9XdJqM9Npn_1A.p12"
+          "storeFile": "/storage/Users/currentUser/Documents/ohos/config/default_dbxohosdUZI6Tr9cHl_4UaRvJYTYdNNEYSb0rK5vsYaH3PWw2Q.p12"
         },
         "type": "HarmonyOS"
       }

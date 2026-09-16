@@ -21,13 +21,13 @@
 #   默认 127.0.0.1:43817）。`--serial` 只用于在候选设备中选择 / 作为回退地址。
 #
 # 冷缓存场景制造（只清缓存、不动已保存的连接）：
-#   hdc shell "bm clean -c -n com.dbx.ohos"
+#   hdc shell "bm clean -c -n io.github.getz110.dbx"
 #
 # 退出码：0 = 全部通过；1 = 有断言失败；2 = 环境/参数错误。
 
 set -uo pipefail
 
-BUNDLE="com.dbx.ohos"
+BUNDLE="io.github.getz110.dbx"
 ABILITY="EntryAbility"
 DEFAULT_SERIAL="127.0.0.1:43817"
 

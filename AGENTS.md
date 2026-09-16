@@ -21,8 +21,9 @@ dbx-ohos/                     # 父仓库，只有 main 一个分支，直接在
 
 > 分支约定：父仓库 `main` 为唯一开发分支（原 `feat/harmony-desktop-mode` 已合并删除）；submodule 侧固定用 `harmonyos-port`。**两边都已推到 origin**，改动请保持同步推送。
 
-## 当前状态（2026-09-13）
+## 当前状态（2026-09-13；包名/签名一节 2026-09-16 更新）
 
+- **包名（2026-09-16 改名 + 重签名，已验证）**：`io.github.getz110.dbx`（原 `com.dbx.ohos` —— 末段 `ohos` 是 AGC 保留字，不合规）。用 **DevEco Studio 自动签名**对新包名重签完成：profile 换成 `~/Documents/ohos/config/default_dbxohosdUZI6Tr9cHl_4UaRvJYTYdNNEYSb0rK5vsYaH3PWw2Q.{cer,p7b,p12}`（内部 `"bundle-name":"io.github.getz110.dbx"`、`"allowed-acls":["ohos.permission.READ_WRITE_DOCUMENTS_DIRECTORY"]`），DevEco 同时改写了 `build-profile.json5` 的 `signingConfigs`。之后 CLI `assembleHap` **`SignHap` 通过**，签名/未签名包 `pack.info` 均为新包名（69,018,553 / 68,605,764 字节，`version 1.3.3 / 1003003`），`./dev-run.sh --skip-build` 装机启动正常，两轮真机日志离线复跑启动冒烟各 **12/12 PASS**。**注意：签名 profile 与包名绑死，再改包名必须重做签名**（不改就会 `SignHap` 报 `00303074`）。**开 DevEco 前先 `harmony/tools/hvigor_links.sh off`，回 CLI 前 `on`**（否则 DevEco 同步报 `00302013`，见「DevEco Studio 与命令行构建的冲突」）。改名后是**全新的应用身份**：老 `com.dbx.ohos` 已手动卸载，数据（连接/驱动/JRE）**没有迁移**，历史 `release/*.hap` 仍是老包名。详见「构建命令 → 改包名（bundleName）」。
 - **版本**：`AppScope/app.json5` = `versionName 1.3.3 / versionCode 1003003`，**已于 2026-09-13 发布到 GitHub release**（tag `v1.3.3-dbx0.6.9`，Latest；hotfix：结果表格第一行被表头压住 + 切 Canvas 丢表头）。上一版是 `1.3.2 / 1003002`（tag `v1.3.2-dbx0.6.9`，资产未被覆盖）。上游仍是 dbx v0.6.9，dist/.so 未重建。
 - **启动指标**（真机 HUAWEI MateBook Pro / HAD-W32，`force-stop` + `aa start`）：
 
@@ -102,6 +103,73 @@ node /storage/Users/currentUser/deveco_tools/hvigor/bin/hvigorw.js \
 # 产物：entry/build/default/outputs/default/entry-default-{signed,unsigned}.hap
 ```
 
+### 改包名（bundleName）
+
+包名受 AGC 规范约束：≥3 段点分、7–128 字符、每段只允许字母/数字/下划线、首段以字母开头、每段以字母或数字结尾、**不能把保留字作为独立段**（`oh`/`ohos`/`harmony`/`harmonyos`/`openharmony`/`system`）。`com.dbx.ohos` 就是踩了最后一条，2026-09-16 改成 `io.github.getz110.dbx`。
+
+**改名要动的地方**：
+1. `harmony/dbxohos/AppScope/app.json5` 的 `bundleName`（唯一真值）；
+2. `harmony/tools/startup_smoke.sh` 的 `BUNDLE=`（以及注释里的示例）；
+3. `AGENTS.md` 里所有 `aa start/force-stop/bm clean -n` 示例；
+4. 无需改代码：ArkTS/Rust 都没硬编码包名，沙箱路径由运行时给。
+
+**改完必须重做签名，否则装不上**（实测）：
+
+```
+> hvigor ERROR: Failed :entry:default@SignHap...
+> 00303074 Configuration Error
+> The bundleName in app.json5/hvigorfile.ts does not match the bundleName in the generated SigningConfigs
+```
+
+原因：签名 profile（`.p7b`，本项目放在 `~/Documents/ohos/config/`，`default_dbxohos*.p7b`）内部带 `"bundle-name"`，与 `app.json5` 必须一致；`build-profile.json5` 的 `app.signingConfigs[].material` 指向了 cert/profile 路径。修法二选一：
+- **DevEco Studio**：用新包名打开工程 → `File > Project Structure > Project > Signing Configs` → 勾自动签名（需登录华为账号，且该 bundle name 已在 AGC 注册）→ 它生成新的 profile/cert，并把 `build-profile.json5` 的 signingConfigs 指过去；
+- **AGC**：按新包名注册应用 → 申请 debug/release Profile（要用的 ACL 权限一并勾）→ 下载 `.p7b` 替换本机 profile，并同步改 `build-profile.json5` 里的 `certpath`/`profile`。
+
+**注意**：未签名包不受影响（`assembleHap` 会先生成 `entry-default-unsigned.hap` 再签名失败），所以**发版产物仍可构建**；只有本地装机调试需要新 profile。另外改名 = 新应用，老的 `com.dbx.ohos` 已手动卸载、**数据不迁移**，历史 release（`release/*.hap`）都还是老包名。
+
+**本次实操记录（2026-09-16：改名 + 重签名一次跑通）**：
+
+1. 改 `AppScope/app.json5` 的 `bundleName` → `io.github.getz110.dbx`，同步 `startup_smoke.sh` 的 `BUNDLE=` 与 AGENTS.md 里的 `aa start/force-stop/bm clean -n` 示例；
+2. CLI `assembleHap` 首次在 `SignHap` 失败（`00303074`，旧 profile 绑着老包名）；
+3. `harmony/tools/hvigor_links.sh off` → DevEco Studio 打开工程 → `File > Project Structure > Project > Signing Configs` → 勾自动签名（`Associate with registered application` / `Automatically generate signature`，需登录华为账号）→ 同步/构建通过，生成新 profile/cert（文件名见上「当前状态」）；
+4. DevEco 改写 `build-profile.json5` 的 `app.signingConfigs[0].material`（`certpath`/`profile`/`storeFile` 三项都指向新文件）；
+5. `harmony/tools/hvigor_links.sh on` → CLI `assembleHap` **`SignHap` 通过，BUILD SUCCESSFUL**；`entry-default-signed.hap` 69,018,553 B / `entry-default-unsigned.hap` 68,605,764 B，两者 `pack.info` 均为 `bundleName = io.github.getz110.dbx`、`version 1.3.3 / 1003003`；
+6. `./dev-run.sh --skip-build` 装机 + 启动正常；对两轮真机日志离线复跑启动冒烟，各 **12/12 PASS**（`modules loaded` 338ms / 356ms，页内 FCP 1237ms / 1159ms）。
+
+**顺带证实**：DevEco 自动签名会**代申请受限 ACL**——新 profile 的 `"acls":{"allowed-acls":[...]}` 里被自动写进了 `ohos.permission.READ_WRITE_DOCUMENTS_DIRECTORY`（本机上一份 profile 是 `allowed-acls: []`）。将来要 JIT 那几个权限，同样走这条自动签名路径（见「JIT / 可执行内存权限」）。**注意 `module.json5` 里先别留权限声明**，否则装机报 `9568289`（约束 1）。
+
+### DevEco Studio 与命令行构建的冲突（hvigor 依赖挂接，2026-09-16 实测）
+
+**两套 hvigor 不能共用同一份项目依赖**：
+
+| 环境 | hvigor 从哪来 | 项目需要什么 |
+|---|---|---|
+| 命令行（`deveco_tools`） | `$DEVECO_TOOLS/hvigor/bin/hvigorw.js`（6.23.15-next） | **必须**有 `node_modules/@ohos/{hvigor,hvigor-ohos-plugin}` → 符号链接到 `$DEVECO_TOOLS/hvigor/*`；缺了报 `Cannot find module '@ohos/hvigor-ohos-plugin'`（`NODE_PATH` 无效，hvigor 用自己的解析逻辑） |
+| DevEco Studio | 它自带的一份，跑在自己的 HNP 沙箱里（日志里是 `/data/app/hvigor.org/hvigor_1.0.0/bin/hvigorw.js`） | 项目里**不能有**指向项目外的这些符号链接（沙箱读不到目标 / 与它自带的 hvigor 版本不匹配） |
+
+冲突表现（DevEco 同步/构建时）：
+
+```
+> hvigor ERROR: 00302013 Script Error
+> Error Message: The root node is not yet available for build. At file: hvigorfile.ts or hvigorconfig.ts
+> hvigor ERROR: BUILD FAILED in 3 s 225 ms
+```
+
+官方对 `00302013` 的解释是"根节点还没准备好用于构建"，列出的可能原因是在 `hvigorconfig.ts` 里过早调用 API（本项目没有 `hvigorconfig.ts`）；本项目实测的成因是 **app 插件（`appTasks`）没被加载出来**，于是根节点始终不注册——即上面那条"DevEco 读不到项目外的插件"。判据：同一个工程用 CLI 跑 `hvigorw.js --sync -p product=default` **通过**，在 DevEco 里失败。
+
+**切换脚本**（`harmony/tools/hvigor_links.sh`）：
+
+```bash
+./harmony/tools/hvigor_links.sh status   # 看两个链接现状
+./harmony/tools/hvigor_links.sh off      # 用 DevEco 之前：删符号链接 + 清 .hvigor/{cache,outputs}
+./harmony/tools/hvigor_links.sh on       # 回到命令行构建：重建符号链接
+```
+
+- `off` 只 `rm` 符号链接本身，不动 `$DEVECO_TOOLS` 里的实体目录；清缓存是为了避免两套 hvigor 的缓存互相污染。
+- **清缓存后第一次 CLI 构建可能失败一次**（报 hvigor-config 相关），再跑一次即正常。
+- 用 DevEco 自动签名成功后，DevEco 会**改写 `build-profile.json5`**（新的 `signingConfigs`：新 profile/cert 路径）与 `local.properties`；之后跑 `hvigor_links.sh on`，命令行就能继续构建/装机（用的是 DevEco 生成的新 profile）。
+- **顺序别搞反**：`off` → 开 DevEco（同步 / 自动签名）→ **关 DevEco** → `on` → CLI 构建/装机。两边都不切时是典型的"互相看不见"：DevEco 报 `00302013`、CLI 报 `Cannot find module '@ohos/hvigor-ohos-plugin'`，同一个根因的两面。自动签名还要求工程的 bundle name **已在 AGC 注册**、本机时间与北京时间一致（见「改包名」的实操记录）。
+
 ### 命令行环境修复（本机已做，勿删）
 
 - SDK 工具链缺 `x` 位：`chmod +x` 过 `toolchains/{hdc,restool,ark_disasm,syscap_tool,...}`、`toolchains/lib/{ohos_packing_tool,hap-sign-tool,binary-sign-tool}`、`ets/.../ark/build/bin/{es2abc,panda_guard}`
@@ -109,6 +177,8 @@ node /storage/Users/currentUser/deveco_tools/hvigor/bin/hvigorw.js \
 - plugin 的 `node_modules/@ohos/hvigor` → symlink 到 `deveco_tools/hvigor/hvigor`；hvigor 自身 `node_modules/@ohos/hvigor` → 自链接（worker 解析需要）
 - `deveco_tools/tool/node` → symlink 到 `deveco_tools/node`（CLT 布局需要）
 - 已知小问题：`devecocli check lint` 能跑但报告为空（codelinter 与 SDK 26/OHOS 7.0 Beta 兼容问题），当前以 hvigor `CompileArkTS` 无错为准。
+- **`deveco_tools` 里的 OHOS clang 不可用**（2026-09-15 实测）：`sdk/default/openharmony/native/llvm/bin/{clang,clang-15}` 是无法执行的实体文件（`EPERM`；原本应是 `clang -> clang-15` 符号链接，被复制成普通文件后代码签名失效）。编原生代码（如 native child process 的子进程库）请用 **Harmonybrew 那份 NDK**：`OHOS_NDK_HOME=/storage/Users/currentUser/.harmonybrew/Cellar/ohos-sdk/26.0.0.18_1/native`，示例见 `harmony/tools/build_ncp_spike.sh`。
+- 写原生 child process 代码时：`AbilityKit/native_child_process.h` 自身没 include `<stdbool.h>`，包含它之前要先 `#include <stdbool.h>`，否则报 `unknown type name 'bool'`。
 
 ## 下一步任务（按优先级，2026-09-13 排定）
 
@@ -124,6 +194,17 @@ node /storage/Users/currentUser/deveco_tools/hvigor/bin/hvigorw.js \
 3. ✅ **启动冒烟已脚本化（2026-09-13 完成）**：`harmony/tools/startup_smoke.sh`——`force-stop → hilog -r → aa start → 抓 25s 日志 → 12 条断言`（断言清单见「验证方式」）。用法：`--mode warm|cold|auto`、`--log <file>`（离线对历史日志重跑断言，不需要设备）、`--serial`；退出码 0/1/2。
    - 理由：这一轮改的东西大多**错了会静默退化**——指纹判断错 → 用户一直用旧前端；缓存头丢 → 冷启动退回 3.8s；启动页隐藏逻辑错 → 闪白；gzip 门控失效 → 白烧 1s CPU。没有自动化只能靠人记。
    - 验证记录：真机三连（暖 293ms/991ms → `bm clean -c` 冷 1573ms/2656ms → 回温 296ms/1006ms）全部 12/12 PASS；离线负向测试确认冷日志在 `--mode warm` 下正确判 FAIL，注入 `Cannot read properties of undefined` 后正确判 FAIL。
+
+### P0' agent 类驱动在 HarmonyOS 6 上不可用（2026-09-14 诊断；**方案 D 已打通 oracle**，其余暂不实施）
+
+- **根因**：HarmonyOS 6 强制 **ELF 代码签名**（`code_protect`/BinSec，hilog `node: CheckSigned, ret: 1017604106`）。沙箱里下载的未签名 ELF `execve` → `EACCES`；自签名后普通用户域能跑、**应用域仍 `EPERM`**。**别再往「chmod / 文件权限位」方向排查**，影响所有走子进程的 agent 驱动（oracle/达梦/hive/… 及 JRE）。
+- **已被真机证伪、别再从头试的三条**：**A** HNP 随 HAP 分发（要华为二进制证书扩展 + 官方工具链的 signMap）；**B** 受限权限 + 自签名（受限权限要 AGC 审批的 ACL，本机 profile `allowed-acls:[]` → 装机 `9568289`）；**A′** agent ELF 放进 HAP `libs/`（装后 0644 无 x 位 → `execve` `EACCES`）。
+- **可行路线 D = native child process**：appspawn 以应用身份起子进程，入口是 `libs/` 里 .so 的导出函数（走 dlopen，不需要 x 位/签名）。
+  - ✅ **oracle 端到端已跑通**（真机）：`libdbx_agent_oracle.so`（Go c-shared，28MB）在子进程里回 `{"ready":true}` + `handshake`；ArkTS 与 Rust 两侧都验证过（Rust：`UnixStream::pair()` + `#[link(name="child_process")] OH_Ability_StartNativeChildProcess`）。
+  - **Go c-shared 在 musl 上有两处硬伤，必须打 Go 运行时补丁**（否则连 dlopen 都过不去）：① IE TLS（`runtime.load_g/save_g` 访问 `runtime.tls_g`，[go#54805](https://github.com/golang/go/issues/54805) 至今 open；`-fno-emulated-tls`/TLSDESC 也不行——OHOS musl 不支持 TLSDESC，这正是 OHOS clang 默认 `-femulated-tls` 的原因）→ 改调 C 侧 `static __thread`；② `_rt0_arm64_lib` 拿不到 argc/argv（musl 调 init_array 不传）→ 改用 asm 自带骨架。落地：`harmony/tools/go_ohos_overlay.py`（**`-overlay` 对 `.s` 生效**，不碰 GOROOT）+ `build_agent_cshared.sh`。
+  - **E = JDBC 进程内 JVM：已评估，当前不可行**（三重卡死）：① 沙箱里的 .so `dlopen` 被拒（EINVAL），**只有 HAP `libs/` 能 dlopen**；② JIT 默认被禁（exec 内存 `EINVAL`），权限名与申请路径见「关键约束/坑 → **JIT / 可执行内存权限**」；③ dbx 下载的 JRE 是 **glibc** 的（`libjvm.so` 依赖 `libc.so.6`），OHOS 只有 musl。
+- **还没做**：① 传输层接进 `AgentRuntimeClient`（现仍是 `std::process::Child` + stdio 管道，需抽象 `{ChildStdio, NcpStream}` 与 `kill()` 语义；每轮重建 46MB `.so` 约 12–31 分钟）；② 其余 13 个 Go agent 机械铺开（每个 `main()`→`runStdioAgent()` + `ohos_ncp.go`，共用 shim；`duckdb`/`tdengine` 是 Rust agent 走 cdylib）；③ JRE 内嵌 JVM；④ `compressNativeLibs`（HAP 已 90MB）。
+- 完整证据链/失败码/复现命令/脚手架清单见 `docs/ohos-agent-exec-denied.md` **§9–§16**（§13 spike、§14 Go+Rust 打通、§15 JDBC、§16 现状与续做起点）。
 
 ### P1 二选一（按真实痛点）
 
@@ -200,6 +281,44 @@ node /storage/Users/currentUser/deveco_tools/hvigor/bin/hvigorw.js \
 - **放回要早于下一帧**：还原若只挂在 250ms 防抖的 `applyAll` 上，切模式时表头会先消失约 0.5s。现在 MutationObserver 回调里先跑 `healDetached()`（microtask，早于绘制），实测 DOM↔Canvas 反复切换 **0 帧**缺表头。
 - 已知外观差异（未修，用户已确认不影响使用）：Canvas 网格底色取 `--background`（xcode 主题 `rgb(250,252,255)`），DOM 网格根是上游写死的白色，所以最后一列右侧空白区在 Canvas 下带一层约 5/255 的浅灰，看起来像表头多延伸一截。
 
+### HarmonyOS 6 原生代码执行（agent 驱动，2026-09-14 实测）
+
+- **应用沙箱里"下载来的 ELF"不能执行**，两级拦截：
+  1. 无代码签名 → `execve` 返回 `EACCES`（hilog：`code_protect/BSS … node: CheckSigned, ret: 1017604106`，伴随 `FillElfModuleJson: empty module.json buf`）；
+  2. 即使用 `binary-sign-tool sign … -selfSign 1` 自签名，**应用域仍返回 `EPERM`**（自签名只在普通用户/Harmonybrew 这类开发域能跑）。
+- 平台正路只有两条：**HNP**（`hnpPackages`，随 HAP 安装、由应用证书授权；`ohos_packing_tool` 有 `--hnp-path`，但本机 hvigor 插件不带 hnp 逻辑、SDK 里也没有 `hnpcli`），或申请受限权限 `ohos.permission.kernel.DISABLE_CODE_MEMORY_PROTECTION`（system_basic + profile ACL）后自行给 ELF 补 `.codesign`。
+- 所以：**agent 类驱动（oracle/达梦/hive/… 及 JRE）在 HarmonyOS 上当前全部起不来**；进程内 Rust 驱动不受影响。排查结论与详细方案见 `docs/ohos-agent-exec-denied.md`。
+
+### JIT / 可执行内存权限（2026-09-16 查证官方文档 + 真机实测）
+
+**背景**：应用域默认**不能造可执行内存**。真机实测（子进程里跑 `jvm_probe.c`）：`mmap(PROT_READ|PROT_WRITE|PROT_EXEC)`、匿名 `mmap(PROT_READ|PROT_EXEC)`、`mprotect(→RWX)`、`mprotect(→RX)` 全部 `EINVAL(22)`，而普通 `mmap(RW)` 正常。所以任何 JIT（JVM/JS 引擎/自研 JIT）默认都起不来。
+
+**权限名称与级别**（`sdk/default/openharmony/toolchains/lib/PermissionDefinitions.json`，均为 `grantMode: system_grant` + `availableLevel: system_basic` + `provisionEnable: true` + `isKernelEffect: true`）：
+
+| 权限 | since | 用途 | 自动签名可代申请 |
+|---|---|---|---|
+| `ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY` | 14 | 申请可写可执行内存（**通用 JIT / JVM 要的就是它**） | ✅ 5.0.3 Release 起 |
+| `ohos.permission.kernel.ALLOW_EXECUTABLE_FORT_MEMORY` | 14 | 系统 JS 引擎申请 `MAP_FORT` 匿名可执行内存 | ✅ 5.0.3 Release 起 |
+| `ohos.permission.kernel.DISABLE_CODE_MEMORY_PROTECTION` | 14 | 关闭系统代码内存保护 | ✅ 5.0.3 Release 起 |
+| `ohos.permission.kernel.ALLOW_USE_JITFORT_INTERFACE` | 16 | 新的 JITFort 接口 | ❌ 不在列表，须 AGC 人工申请 |
+
+**两条申请路径（[FAQ faqs-appgallery-78](https://developer.huawei.com/consumer/cn/doc/harmonyos-faqs/faqs-appgallery-78) 原文）**：
+
+1. **DevEco Studio 自动签名代申请（调试阶段推荐）**："在自动签名的过程中，将由 DevEco Studio 完成向 AGC 申请受限权限的步骤，开发者可直接使用。"
+   - 步骤：`module.json5` 的 `requestPermissions` 声明权限 → 连真机 → `File > Project Structure > Project > Signing Configs` → 勾 **"Associate with registered application" / "Automatically generate signature"**（未登录先 Sign In）→ （可选）添加 ACL 权限信息（[自动签名](https://developer.huawei.com/consumer/cn/doc/harmonyos-guides/ide-signing-auto)，"自动签名支持的ACL权限"清单见该文 §section5301916183411）。
+   - 前置条件：DevEco Studio ≥ 6.0.0 Beta5 才有"关联注册应用的自动签名"（6.1.1 Beta1 起全球可用）；**应用须已在 AGC 注册且 bundle name 一致**；连真机（或把真机注册到 AGC）；本机时间须与北京时间一致。
+2. **AGC 试用调试 Profile（审核等待期用）**：提交 ACL 申请后可创建试用调试 Profile，**有效期 5 天**、每应用最多 5 个；把 ACL 权限加进 Profile、下载后手动签名。正式流程则是 AGC「项目设置 → ACL 权限」申请（约 1 个工作日）→ 申请 debug/release Profile 时勾选「受限ACL权限（HarmonyOS API9及以上）」（[受限 ACL 权限申请](https://developer.huawei.com/consumer/cn/doc/harmonyos-guides/declare-permissions-in-acl)）。
+
+**四条硬约束（都踩过或原文明确）**：
+
+1. **声明了权限但没有权限证书 → 安装直接失败**：实测 `code:9568289 install failed due to grant request permissions failed. PermissionName: ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY`（[JSVM 申请JIT权限指导](https://developer.huawei.com/consumer/cn/doc/harmonyos-guides/jsvm-apply-jit-profile) 的"适配注意事项"也这么写）。**所以千万别把权限留在 `module.json5` 里提交**，本仓库已还原。
+2. 本机（纯 CLI：hvigor + `~/Documents/ohos/config/` 里那份 `"acls":{"allowed-acls":[]}` 的 debug profile，无 DevEco GUI、无登录账号）**跑不了自动签名**；要启用得在有 DevEco Studio 的机器上登录勾自动签名，或从 AGC 下载带 ACL 的 profile 替换本机 profile。
+   - **2026-09-16 更新（已有实证）**：本机现已装 DevEco Studio 并用它自动签名成功，新 profile 的 `allowed-acls` 从 `[]` 变成 `["ohos.permission.READ_WRITE_DOCUMENTS_DIRECTORY"]` —— 即**自动签名确实会代为向 AGC 申请受限 ACL**，不是只换个 bundle name。JIT 这几个权限走同一条路即可（把权限写进 `module.json5` → DevEco 自动签名 → 装真机验证 → **验证完把权限声明撤掉**，见约束 1）；完整步骤见「改包名（bundleName）」的「本次实操记录」。
+3. **坚盾守护模式开启期间，系统在全局范围内禁用 JIT，包括已获 ACL 权限的特权应用**（原文）。
+4. 部分 ACL 权限**只对受邀应用开放**，非受邀应用在 AGC 上申请不到。
+
+**对本项目的意义**：JIT 权限只解决"能不能造可执行内存"；它**不能**解决 §15 的另外两条（沙箱里的 .so 一律 `dlopen` 不了、dbx 下载的 JRE 是 glibc 而 OHOS 只有 musl），所以 JDBC 走进程内 JVM 依然不可行。将来若要做 JIT 类功能（JVM / 自研引擎），按上面路径 1 走即可，不必等功能开发完再申请。
+
 ### Rust 服务
 
 - **不要用 `aws-lc-rs`**：OHOS 目标链接失败；TLS 相关 crate 已切到 `ring`（`rustls`、`russh`、`mysql_async`）。
@@ -226,7 +345,7 @@ node /storage/Users/currentUser/deveco_tools/hvigor/bin/hvigorw.js \
   ```bash
   unzip -o -q <hap> pack.info module.json -d .tmp/hapcheck
   python3 -c "import json;d=json.load(open('.tmp/hapcheck/pack.info'));print(d['summary']['app'])"
-  # → {'bundleName': 'com.dbx.ohos', 'version': {'code': 1003003, 'name': '1.3.3'}}
+  # → {'bundleName': 'io.github.getz110.dbx', 'version': {'code': 1003003, 'name': '1.3.3'}}
   ```
 
 ## 同步上游（t8y2/dbx main → harmonyos-port）
@@ -367,10 +486,10 @@ cp target/release/libdbx_ohos.so ../../harmony/dbxohos/entry/libs/arm64-v8a/libd
 脚本内部等价于下面这段手测流程：
 
 ```bash
-hdc shell aa force-stop com.dbx.ohos; sleep 1
+hdc shell aa force-stop io.github.getz110.dbx; sleep 1
 hdc shell hilog -r
 (hdc hilog > .tmp/perf.log &) ; sleep 2
-hdc shell aa start -a EntryAbility -b com.dbx.ohos
+hdc shell aa start -a EntryAbility -b io.github.getz110.dbx
 sleep 25   # 然后按下表断言
 ```
 
@@ -395,7 +514,7 @@ grep -oE "FCP:[0-9]+ms" .tmp/perf.log | head -1           # 页内 FCP
 grep -E "ARKWEB-CONSOLE" .tmp/perf.log | grep -E "modules loaded|vue mounted"
 ```
 
-冷缓存场景用 `hdc shell "bm clean -c -n com.dbx.ohos"` 制造（**只清缓存、不动已保存的连接**）。
+冷缓存场景用 `hdc shell "bm clean -c -n io.github.getz110.dbx"` 制造（**只清缓存、不动已保存的连接**）。
 
 ### 驱动真机 UI（缩放 / 截图 / 布局测量）
 
