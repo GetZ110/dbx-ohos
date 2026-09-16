@@ -195,16 +195,18 @@ node /storage/Users/currentUser/deveco_tools/hvigor/bin/hvigorw.js \
    - 理由：这一轮改的东西大多**错了会静默退化**——指纹判断错 → 用户一直用旧前端；缓存头丢 → 冷启动退回 3.8s；启动页隐藏逻辑错 → 闪白；gzip 门控失效 → 白烧 1s CPU。没有自动化只能靠人记。
    - 验证记录：真机三连（暖 293ms/991ms → `bm clean -c` 冷 1573ms/2656ms → 回温 296ms/1006ms）全部 12/12 PASS；离线负向测试确认冷日志在 `--mode warm` 下正确判 FAIL，注入 `Cannot read properties of undefined` 后正确判 FAIL。
 
-### P0' agent 类驱动在 HarmonyOS 6 上不可用（2026-09-14 诊断；**方案 D 已打通 oracle**，其余暂不实施）
+### P0' agent 类驱动在 HarmonyOS 6 上不可用（2026-09-14 诊断；**2026-09-17 方案 D 已生产化，oracle 应用内跑通**）
 
 - **根因**：HarmonyOS 6 强制 **ELF 代码签名**（`code_protect`/BinSec，hilog `node: CheckSigned, ret: 1017604106`）。沙箱里下载的未签名 ELF `execve` → `EACCES`；自签名后普通用户域能跑、**应用域仍 `EPERM`**。**别再往「chmod / 文件权限位」方向排查**，影响所有走子进程的 agent 驱动（oracle/达梦/hive/… 及 JRE）。
 - **已被真机证伪、别再从头试的三条**：**A** HNP 随 HAP 分发（要华为二进制证书扩展 + 官方工具链的 signMap）；**B** 受限权限 + 自签名（受限权限要 AGC 审批的 ACL，本机 profile `allowed-acls:[]` → 装机 `9568289`）；**A′** agent ELF 放进 HAP `libs/`（装后 0644 无 x 位 → `execve` `EACCES`）。
 - **可行路线 D = native child process**：appspawn 以应用身份起子进程，入口是 `libs/` 里 .so 的导出函数（走 dlopen，不需要 x 位/签名）。
   - ✅ **oracle 端到端已跑通**（真机）：`libdbx_agent_oracle.so`（Go c-shared，28MB）在子进程里回 `{"ready":true}` + `handshake`；ArkTS 与 Rust 两侧都验证过（Rust：`UnixStream::pair()` + `#[link(name="child_process")] OH_Ability_StartNativeChildProcess`）。
+  - ✅ **2026-09-17 生产化完成**：`crates/dbx-core/src/db/agent_ncp.rs` + `agent_driver.rs` 的 `AgentProcess`/`SpawnedAgent`/`spawn_agent_io()` + `agent_manager.rs` 的 `ohos_bundled_agent_launch()`（`"oracle" => libdbx_agent_oracle.so:Main`）。同一个 `/api/connection/test` 从 `Permission denied (os error 13)` 变成 **`dial tcp 127.0.0.1:1521: connect: connection refused`**（= 子进程起来、handshake 通过、go-ora 真的拨号）。报告：`docs/ohos-oracle-driver-report.md`；细节：`docs/ohos-agent-exec-denied.md` §17。注意 release 重建实测 **45m42s**，HAP 69→**90MB**。
   - **Go c-shared 在 musl 上有两处硬伤，必须打 Go 运行时补丁**（否则连 dlopen 都过不去）：① IE TLS（`runtime.load_g/save_g` 访问 `runtime.tls_g`，[go#54805](https://github.com/golang/go/issues/54805) 至今 open；`-fno-emulated-tls`/TLSDESC 也不行——OHOS musl 不支持 TLSDESC，这正是 OHOS clang 默认 `-femulated-tls` 的原因）→ 改调 C 侧 `static __thread`；② `_rt0_arm64_lib` 拿不到 argc/argv（musl 调 init_array 不传）→ 改用 asm 自带骨架。落地：`harmony/tools/go_ohos_overlay.py`（**`-overlay` 对 `.s` 生效**，不碰 GOROOT）+ `build_agent_cshared.sh`。
   - **E = JDBC 进程内 JVM：已评估，当前不可行**（三重卡死）：① 沙箱里的 .so `dlopen` 被拒（EINVAL），**只有 HAP `libs/` 能 dlopen**；② JIT 默认被禁（exec 内存 `EINVAL`），权限名与申请路径见「关键约束/坑 → **JIT / 可执行内存权限**」；③ dbx 下载的 JRE 是 **glibc** 的（`libjvm.so` 依赖 `libc.so.6`），OHOS 只有 musl。
-- **还没做**：① 传输层接进 `AgentRuntimeClient`（现仍是 `std::process::Child` + stdio 管道，需抽象 `{ChildStdio, NcpStream}` 与 `kill()` 语义；每轮重建 46MB `.so` 约 12–31 分钟）；② 其余 13 个 Go agent 机械铺开（每个 `main()`→`runStdioAgent()` + `ohos_ncp.go`，共用 shim；`duckdb`/`tdengine` 是 Rust agent 走 cdylib）；③ JRE 内嵌 JVM；④ `compressNativeLibs`（HAP 已 90MB）。
-- 完整证据链/失败码/复现命令/脚手架清单见 `docs/ohos-agent-exec-denied.md` **§9–§16**（§13 spike、§14 Go+Rust 打通、§15 JDBC、§16 现状与续做起点）。
+- **还没做**：① 其余 13 个 Go agent 机械铺开（每个 `main()`→`runStdioAgent()` + `ohos_ncp.go`，共用 shim；`duckdb`/`tdengine` 是 Rust agent 走 cdylib）；② 驱动管理 UI 把内置驱动标成"内置/已安装"并禁用卸载（需重建 dist）；③ JRE 内嵌 JVM；④ `compressNativeLibs` 与 feature HAP 控体积（HAP 已 90MB，每个 Go agent 压缩后 +20~28MB）。
+- **启动回归已补验（2026-09-17）**：`startup_smoke.sh --mode warm` **12/12 PASS**（`modules loaded` 359ms / FCP 1216ms），加 28MB agent `.so` 后启动无回归。
+- 完整证据链/失败码/复现命令/脚手架清单见 `docs/ohos-agent-exec-denied.md` **§9–§17**（§13 spike、§14 Go+Rust 打通、§15 JDBC、§16 现状、§17 生产化实测）。
 
 ### P1 二选一（按真实痛点）
 
