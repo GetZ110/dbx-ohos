@@ -757,3 +757,44 @@ W C05610/code_protect/BSS: [BinSec][svc:node_task][ExecuteTemplate]:node based t
    而 HNP 对我们被 §9 的两个硬门槛卡死（HAP 签名证书缺华为二进制证书扩展 OID `1.3.6.1.4.1.2011.2.376.1.8`；签名里缺 `signMap`，本机 hap-sign-tool/hvigor 无 HNP 逻辑）。所以 `CUSTOM_SANDBOX` 更像是**配合 HNP 的动态沙箱**，单独批下来也未必能过 `LoadBinCtrlAndManage`。
 
 **最终结论（三次实验 + 设备旁证后）**：应用**直接 `execve` 沙箱里的 ELF 这条路在 HarmonyOS 6 上对普通应用是封死的**——未签名 `EACCES`、自签名/应用证书签名 `EPERM`、受限 ACL 拿不到（且大概率无效）。能跑原生代码的只有两条：**HNP**（需要华为"二进制证书"与支持 HNP 的签名工具链）和 **native child process**（本仓库采用，appspawn `dlopen` HAP `libs/` 的 `.so`，不需要任何授权）。
+
+## 19. 参考项目：VintagePomeloPro（Wine on HarmonyOS）怎么做的（2026-09-17 调研）
+
+来源：<https://github.com/yifengling0/VintagePomeloPro>（clone 到 `.tmp/vpp/` 后逐文件核对）。这是个把 Wine/Box64 跑在 HarmonyOS 上的成熟开源项目，**结论：它和我们走的是同一条路（NCP），并且明确放弃了 HNP 与 execve。**
+
+### 19.1 与我们一致的部分（等于交叉验证了方案 D）
+
+| 结论 | 他们的证据 |
+|---|---|
+| 用 **native child process** 跑原生代码 | 全项目 `wine`/`wineserver`/`virgl_test_server` 都走 `OH_Ability_StartNativeChildProcess`（`entry/src/main/cpp/proc/broker.cpp`、`ncp_shim/ncp_shim.cpp`）；`README.md` 明确 "NCP appspawn" |
+| arm64 上**不 execve** | `wine_child.cpp` 里 `execve` 只在非 arm64 分支；arm64 是 `dlopen(box64.so)` + `box64_hmos_main()`，由 Box64 自己当加载器 |
+| **可执行代码只从 HAP `libs/` 加载** | `common/fs_utils.cpp: CurrentSharedObjectDir()` 用 `dladdr(&fn)` 求出自身 `.so` 所在目录，再 `dlopen(dir + "/libvirgl_child.so")` —— 与我们 §15.1「只有 HAP libs 能 dlopen」一致 |
+| **放弃 HNP** | `scripts/package.sh` 里明确 `# 移除 hnpPackages (所有平台统一用 rawfile zip)`；整棵 Wine/Box64 树解到沙箱 |
+| `selfSign` 只用于开发域 | `scripts/build_wayland.sh` 调 `ohos-sign-elf.py` 给 `host_prefix`（构建期宿主机工具）签名 —— 印证我们"自签名只在普通用户域有效、应用域 `EPERM`" |
+
+### 19.2 他们比我们多做的两件事（值得记下来）
+
+**① 他们拿到了 JIT 内核 ACL，并且证明它真的有效。**
+`entry/src/main/module.json5` 声明了 `ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY`（Box64 Dynarec 需要 W^X）。`docs/OHOS_MMAP_ANALYSIS.md` 给出的对照表（应用沙箱内）：
+
+| 操作 | 无该 ACL（我们的 jvm_probe，§15.2） | **有该 ACL（他们）** |
+|---|---|---|
+| 匿名 `mmap(RWX)` / 大尺寸 RWX | `EINVAL(22)` | **✓ OK** |
+| 匿名 `mmap(RX)` | `EINVAL(22)` | **✓ OK** |
+| `mprotect(匿名 RW→RX)` | `EINVAL(22)` | **✓ OK** |
+| 文件映射 + `PROT_EXEC` | `EACCES(13)` | **✗ `EACCES(13)`（权限也救不了）** |
+| `mprotect(文件→RX)` | — | **✗ `EACCES(13)`** |
+
+→ **修正 §15.2**：JIT 不是"被硬禁"，而是**被 ACL 门控**，且这个 ACL 第三方应用能拿到（他们就是证据）。但"文件-backed 代码不可执行"是内核级硬限制，与权限无关。
+
+**② 绕开"文件不可执行"的正规姿势：匿名 mmap + pread。**
+`README.md`：「**noexec 文件系统**：可执行段用匿名 mmap + pread 替代文件映射」；`docs/NOEXEC_MMAP_ANALYSIS.md` 详述：Wine 加载 PE 时 `mmap(fd)` 的文件页在 noexec 文件系统上无法 `mprotect(PROT_EXEC)`，改成 `pread` 读进匿名内存后再加执行权限即可。他们也因此把 HNP 路径（`/data/service/hnp/` 挂载为 noexec）换成了 rawfile zip。
+
+其他工程细节：`"compressNativeLibs": false`；签名材料私有（`F:\PomeloWin\signs` + 本地 `build-profile.json5`，不入库），所以看不到他们具体怎么申请到 ACL 的，但 HAP 是 debug 签名并带该权限。
+
+### 19.3 对我们的意义
+
+1. **方案 D（NCP）是社区验证过的正确路线**，不是权宜之计。
+2. 若将来要做 JIT 类功能（JVM / 自研引擎 / 下载即执行的 agent），门槛是 **`ALLOW_WRITABLE_CODE_MEMORY` 这个 ACL**（要先在 AGC 有正式注册的应用，再走 ACL 申请/自动签名），而不是"内核完全禁止"。
+3. 但**"运行时下载的 ELF 直接执行"这条路他们也没走**：他们要么从 HAP `libs/` dlopen，要么自己实现加载器（Box64）用匿名 mmap+pread 把代码搬进内存。后者等于自己写半个 ELF loader，成本远高于我们现在的"内置 `.so` + NCP"。
+4. 可借鉴的小技巧：用 `dladdr()` 取代我们从 `/proc/self/maps` 推 HAP libs 目录（更干净）；以及 `compressNativeLibs` 对 dlopen 的影响值得测一次。
