@@ -117,7 +117,8 @@ curl -s -X POST http://127.0.0.1:4224/api/connection/test \
 | `crates/dbx-core/src/db/agent_ncp.rs`（新增） | `#[link(name="child_process")]` 调 `OH_Ability_StartNativeChildProcess` / `OH_Ability_KillChildProcess`；建 `socketpair`、把子端放进 `fdList`；`NcpChild` 实现 `id/kill/wait/try_wait`（appspawn 子进程不是本进程的 POSIX 子进程，用 `shutdown` + `KillChildProcess` 而不是 `waitpid`） |
 | `crates/dbx-core/src/db/mod.rs` | 注册 `pub mod agent_ncp;` |
 | `crates/dbx-core/src/db/agent_driver.rs` | 新增 `AgentProcess`（`Child` / `Ncp`）与 `SpawnedAgent`；把 `AgentRuntimeClient` 与 `AgentDriverClient` 的 `child`/`stdin`/`stdout` 从具体 `Child*` 类型改成枚举 + `Box<dyn Read/Write + Send>`；新增 `spawn_agent_io()`（OHOS 上优先走 NCP，其余平台完全走原路径）；`AgentLaunchSpec` 加 `ncp_entry` 字段与 `AgentLaunchSpec::ncp()` |
-| `crates/dbx-core/src/agent_manager.rs` | OHOS 专属 `ohos_bundled_agent_launch(driver_key)`：把 `oracle` 映射到 `libdbx_agent_oracle.so:Main`，在 `resolve_agent_launch_spec_with_extra_args()` 最前面短路返回 |
+| `crates/dbx-core/src/agent_manager.rs` | OHOS 专属 `ohos_bundled_agent_library(driver_key)`：识别哪些驱动随 HAP 内置（已知列表 + 探测 HAP `libs/` 目录），在 `resolve_agent_launch_spec_with_extra_args()` 最前面短路成 `AgentLaunchSpec::ncp("libdbx_agent_X.so:Main")`；`is_driver_installed()` 把内置驱动也算"已安装" |
+| `crates/dbx-core/src/agent_service.rs` | `build_agent_list()` 给内置驱动上报 `installed=true`、`bundled=true`、`installed_version="bundled"`、`update_available=false`；`uninstall_agent_driver()` 对内置驱动返回明确错误（随应用分发，不能单独卸载） |
 
 设计上**不影响非 OHOS 目标**：所有 NCP 代码都在 `#[cfg(target_env = "ohos")]` 里，桌面/服务器仍走原来的 `Child` + 管道。
 
@@ -235,6 +236,27 @@ Failed to spawn agent process libdbx_agent_oracle.so:Main: No such file or direc
 | `GET /api/agents/runtime` / `ps` | `stopped`，pid=None，**子进程已退出、无残留** |
 
 即 `NcpChild::kill()`（`shutdown` socket + `OH_Ability_KillChildProcess`）与 reaper 语义在真机上成立。
+
+### 6.6 内置驱动的识别与驱动管理（第三次补验）
+
+前两次都靠 `agent_manager.rs` 里的**硬编码列表**把 `oracle` 映射到内置库；这意味着以后每加一个驱动都要重建 46MB 的 Rust `.so`。这一轮把它改成**通用发现**：
+
+1. `ohos_bundled_agent_library(key)`：先查已知列表，未命中则**探测 HAP `libs/` 目录**里有没有 `libdbx_agent_<key>.so`。探测目录不是写死的，而是从 `/proc/self/maps` 里 `libdbx_ohos.so` 自身的加载路径推导（带 `/data/storage/el1/bundle/libs/arm64` 兜底），并用 `OnceLock` 缓存。
+   → **收益：以后加驱动只要把 `.so` 丢进 `entry/libs/arm64-v8a/` 重建 HAP（约 10s），不用再重建 46MB 的 Rust `.so`。**
+2. 驱动列表把内置驱动当成**已安装**：`installed=true`、`bundled=true`（新增字段，前端旧版本会忽略未知字段）、`installed_version="bundled"`、`update_available=false`；`/api/agents/installed/{dbType}` 返回 `true`；`uninstall` 返回明确错误。
+
+真机验证（此时沙箱里的 oracle 驱动文件**已被卸载**）：
+
+| 检查 | 结果 |
+|---|---|
+| `GET /api/agents/installed-local` | `oracle: installed=true, bundled=true, installed_version="bundled", update_available=false` |
+| `POST /api/agents/uninstall {"dbType":"oracle"}` | `oracle ships inside the app as a bundled native agent and cannot be uninstalled separately` |
+| `POST /api/connection/test`（oracle） | 仍 `dial tcp 127.0.0.1:1521: connect: connection refused` —— **零下载即可连** |
+| `GET /api/agents/installed/oracle` | `true` |
+
+**探针本身也验证过**（关键，否则"以后加驱动不用重建 Rust"只是推测）：往 `entry/libs/arm64-v8a/` 放一个名字匹配 `cassandra` 的假 `.so`（14 字节，不在已知列表），只重建 HAP（10s）并安装 —— 驱动列表里 `cassandra` 立刻变成 `installed=true, bundled=true`；删掉假文件重装后回到 `installed=false, bundled=false`。说明探测逻辑真的在读 HAP `libs/`。
+
+启动回归再跑 **12/12 PASS**（`modules loaded` 317ms / FCP 1081ms）。
 
 ---
 

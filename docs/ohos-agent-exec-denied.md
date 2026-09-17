@@ -679,7 +679,7 @@ PermissionName: ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY
 
 1. **新增 `crates/dbx-core/src/db/agent_ncp.rs`**：`#[link(name="child_process")]` 调 `OH_Ability_StartNativeChildProcess` / `OH_Ability_KillChildProcess`，建 `socketpair` 并把子端放进 `fdList`。`NcpChild::kill()` 用 `shutdown` + `KillChildProcess`（appspawn 子进程不是本进程的 POSIX 子进程，不能 `waitpid`），`wait()` 直接返回（关闭 socket 即让 agent 读到 EOF 自行退出）。
 2. **`db/agent_driver.rs`**：新增 `AgentProcess { Child, Ncp }` 与 `SpawnedAgent { process, stdin: Box<dyn Write+Send>, stdout/stderr: Box<dyn Read+Send> }`；`AgentRuntimeClient` 与 `AgentDriverClient` **都**改用 `spawn_agent_io()`（前者是连接路径，后者是驱动管理器"运行/重启"的 daemon 路径）。`AgentLaunchSpec` 加 `ncp_entry: Option<String>` + `AgentLaunchSpec::ncp()`。
-3. **`agent_manager.rs`**：`#[cfg(target_env = "ohos")] fn ohos_bundled_agent_launch(driver_key)`，在 `resolve_agent_launch_spec_with_extra_args()` 最前面短路：`"oracle" => libdbx_agent_oracle.so:Main`。
+3. **`agent_manager.rs` + `agent_service.rs`**：`ohos_bundled_agent_library(driver_key)` 识别内置驱动（已知列表 + 从 `/proc/self/maps` 推导 HAP `libs/` 目录后探测），在 `resolve_agent_launch_spec_with_extra_args()` 最前面短路成 `AgentLaunchSpec::ncp("libdbx_agent_X.so:Main")`；`is_driver_installed()` 与 `build_agent_list()` 把内置驱动报成"已安装 / bundled"，`uninstall_agent_driver()` 拒绝卸载内置驱动。**通用探测意味着以后加驱动不用重建 Rust `.so`**（已用假 `.so` 验证：见报告 §6.6）。
 4. 非 OHOS 目标零影响：NCP 代码全在 `#[cfg(target_env = "ohos")]` 内。
 
 实测数据：
@@ -689,8 +689,10 @@ PermissionName: ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY
 - 子进程 `io.github.getz110.dbx:Native_libdbx_agent_oracle0`，uid 与应用相同；hilog 里 `CODE_SIGN [XpmIoctl] … Permission denied (ignore)` 是 BinSec 的非致命日志；
 - 失败后运行时自动 `status=stopped`，子进程退出，无残留。
 
-**未做**：① 其余 13 个 Go agent 铺开；② 驱动管理 UI 把内置驱动标成"内置/已安装"（需要重建 dist）；③ 完整 Oracle 实例的 `SELECT 1 FROM dual`（本机没有数据库）。
+**未做**：① 其余 13 个 Go agent 铺开（有了通用探测后，加驱动只需重建 HAP、不用重建 Rust `.so`；每个 agent 压缩后 +20~28MB）；② 前端 dist 未重建，UI 里内置驱动会显示"已安装"但没有单独的"内置"标签（后端已上报 `bundled:true`，前端旧版本忽略该字段）；③ 完整 Oracle 实例的 `SELECT 1 FROM dual`（本机没有数据库）。
 
 **已补验**（解锁设备后，2026-09-17）：`startup_smoke.sh --mode warm` **12/12 PASS**（`modules loaded` 359ms / FCP 1216ms，`Local service ready` 121ms）；重启应用后重跑 Oracle 请求仍是 `dial tcp 127.0.0.1:1521: connect: connection refused`，子进程 `Native_libdbx_agent_oracle0` 稳定复现。**启动与连接链路都无回归。**
 
 **驱动运行时启停也已验证**（第二次 rebuild 把 `AgentDriverClient` 一并接入 NCP；此前 `restart` 报 `Failed to spawn agent process libdbx_agent_oracle.so:Main: No such file or directory`）：`POST /api/agents/runtime/restart {"runtimeId":"agent:oracle"}` → `{"ok":true}`，`running_count=1`、`pid=53176`、`ps` 见子进程；`POST …/runtime/stop` → `{"ok":true}`，`stopped`、pid=None、**子进程退出无残留**（`NcpChild::kill()` + reaper 语义成立）。
+
+**内置驱动识别已通用化**（第三次 rebuild）：驱动列表把内置驱动报成 `installed=true / bundled=true / update_available=false`，卸载返回"随应用分发"的明确错误；探测目录从 `/proc/self/maps` 推导，**以后加驱动只需把 `.so` 放进 `entry/libs` 重建 HAP，不用重建 Rust `.so`**。用假 `libdbx_agent_cassandra.so`（14B）验证过探测生效（报告 §6.6）。
