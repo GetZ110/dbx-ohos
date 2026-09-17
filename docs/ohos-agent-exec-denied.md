@@ -736,3 +736,24 @@ W C05610/code_protect/BSS: [BinSec][svc:node_task][ExecuteTemplate]:node based t
 - **`atm perm -g` 绕不过去**：设备上实测 `Error: Permission '…' is not requested by the application.` —— 权限必须先在 `module.json5` 里声明，而声明了没有 profile ACL 又会装机失败（`9568289`）。所以"不重签名、运行时授权"行不通。
 
 补充记录：`binary-sign-tool` 的 localSign 模式**需要 keystore 明文口令**，而 DevEco 把 `build-profile.json5` 里的口令加密成 `00000020…`；本次是用 hvigor 自带的 `hvigor-ohos-plugin/src/utils/decipher-util.js`（`DecipherUtil.decryptPwd` + `~/Documents/ohos/config/material/{fd,ce,ac}`）在本地 Node 进程里解密后传入签名工具的（口令不打印、不落盘）。这说明"用应用证书签 ELF"在开发机上是**可复现的**——只是复现出来也没用。
+
+### 18.1 `CUSTOM_SANDBOX` 这条路也走不通（2026-09-17 实测 + 设备旁证）
+
+顺着 `LoadBinCtrlAndManage` 日志里的 `isCustomSandbox: 0` / `isAllowExt: 0`，试了官方可能解锁它的受限权限 `ohos.permission.CUSTOM_SANDBOX`（"允许应用将沙箱类型改为动态沙箱"，system_basic / availableType NORMAL / **provisionEnable: true** / since 18）。结论：**当前拿不到，而且拿到了大概率也没用。**
+
+1. **没有 profile ACL 就是装不上**（再次确认）：`module.json5` 声明 `CUSTOM_SANDBOX` 后，用现有 profile 装机：
+   `code:9568289 install failed due to grant request permissions failed. PermissionName: ohos.permission.CUSTOM_SANDBOX`（失败不会破坏已装版本，重新 `aa start` 即可恢复）。
+2. **`atm perm -g` 绕不过**：设备实测 `Error: Permission '…' is not requested by the application.` —— 必须先声明；而"声明 + 无 ACL" = 上面那条安装失败。死循环。
+3. **DevEco Studio 5.1.7 不会代申请它**：点 `Signing Configs → 生成签名文件` 只重写了 `build-profile.json5`（两个密码密文变了），**`.p7b` mtime 不变、`allowed-acls` 仍只有 `READ_WRITE_DOCUMENTS_DIRECTORY`**。官方文档也写明：用 ACL 权限的场景要走**手动签名**（先在 AGC 申请 ACL，再申请带该 ACL 的 Profile）。
+4. **AGC 自助入口在本机账号上不存在**：该账号「APP 与元服务」为空（0 个应用），没有「项目设置 → ACL权限」可进；ACL 申请需要先注册应用/走审批，成本陡增。
+5. **最关键的旁证：能跑原生二进制的应用靠的是 HNP，不是沙箱 exec**。设备上 `atm dump -t -p ohos.permission.CUSTOM_SANDBOX` 列出 7 个持有者，其中非华为的第三方应用（`com.mikannqaq.mkcode`、`com.develop.opensource.ohpcd.bitfun`、`com.tencent.workbuddy`）**`bm dump` 里全都有 `hnpPackages`**；`com.mikannqaq.mkcode` 还是 `appPrivilegeLevel: normal`：
+   ```json
+   "hnpPackages": {"electron": [
+     {"independentSign": true,  "package": "electron.hnp",     "type": "private"},
+     {"independentSign": true,  "package": "rg.hnp",           "type": "private"},
+     {"independentSign": false, "package": "unzip.hnp",        "type": "private"},
+     {"independentSign": true,  "package": "mkcode-agent.hnp", "type": "private"}]}
+   ```
+   而 HNP 对我们被 §9 的两个硬门槛卡死（HAP 签名证书缺华为二进制证书扩展 OID `1.3.6.1.4.1.2011.2.376.1.8`；签名里缺 `signMap`，本机 hap-sign-tool/hvigor 无 HNP 逻辑）。所以 `CUSTOM_SANDBOX` 更像是**配合 HNP 的动态沙箱**，单独批下来也未必能过 `LoadBinCtrlAndManage`。
+
+**最终结论（三次实验 + 设备旁证后）**：应用**直接 `execve` 沙箱里的 ELF 这条路在 HarmonyOS 6 上对普通应用是封死的**——未签名 `EACCES`、自签名/应用证书签名 `EPERM`、受限 ACL 拿不到（且大概率无效）。能跑原生代码的只有两条：**HNP**（需要华为"二进制证书"与支持 HNP 的签名工具链）和 **native child process**（本仓库采用，appspawn `dlopen` HAP `libs/` 的 `.so`，不需要任何授权）。

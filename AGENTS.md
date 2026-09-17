@@ -199,7 +199,7 @@ node /storage/Users/currentUser/deveco_tools/hvigor/bin/hvigorw.js \
 
 - **根因**：HarmonyOS 6 强制 **ELF 代码签名**（`code_protect`/BinSec，hilog `node: CheckSigned, ret: 1017604106`）。沙箱里下载的未签名 ELF `execve` → `EACCES`；自签名后普通用户域能跑、**应用域仍 `EPERM`**。**别再往「chmod / 文件权限位」方向排查**，影响所有走子进程的 agent 驱动（oracle/达梦/hive/… 及 JRE）。
 - **已被真机证伪、别再从头试的三条**：**A** HNP 随 HAP 分发（要华为二进制证书扩展 + 官方工具链的 signMap）；**B** 自己给 ELF 签名（受限权限要 AGC 审批的 ACL；更关键：2026-09-17 三级对照证明**连用应用自己的证书签都没用** —— 未签名 `EACCES(13)` → 自签名 `EPERM(1)` → 应用证书签名（华为签发开发证书 + profile）**仍 `EPERM(1)`**，拒绝点是 BinSec `LoadBinCtrlAndManage`「parent process cannot load this binary」，与签名身份无关）；**A′** agent ELF 放进 HAP `libs/`（装后 0644 无 x 位 → `execve` `EACCES`）。
-- **可能解锁"应用直接执行沙箱 ELF"的只剩两条（均未验证）**：**HNP**；或 `ohos.permission.CUSTOM_SANDBOX`（"允许应用将沙箱类型改为动态沙箱"，system_basic / availableType NORMAL / provisionEnable，日志里的 `isCustomSandbox: 0` 正对应它，华为自家终端 HiShell 就申请了它）。`DISABLE_CODE_MEMORY_PROTECTION` 管的是 XPM 代码完整性保护，大概率无关；`atm perm -g` 绕不过（实测要求权限已被应用声明）。详见 `docs/ohos-agent-exec-denied.md` §18。
+- **`CUSTOM_SANDBOX` 也试过了，走不通（2026-09-17）**：声明后装机 `9568289`；`atm perm -g` 要求权限已声明、而声明了没 ACL 又装不上（死循环）；DevEco 5.1.7 的「生成签名文件」**不会**代申请 ACL（`.p7b` 不变）；AGC 账号里「APP 与元服务」为空、没有 ACL 自助入口。**关键旁证**：设备上持有 `CUSTOM_SANDBOX` 的 7 个应用（含 3 个第三方，如 `com.mikannqaq.mkcode`，`appPrivilegeLevel: normal`）**全都有 `hnpPackages`** → 能跑原生二进制靠的是 **HNP**，`CUSTOM_SANDBOX` 只是配合它的动态沙箱。而 HNP 被 §9 的硬门槛卡死（证书缺二进制证书扩展 OID + 缺 signMap）。`DISABLE_CODE_MEMORY_PROTECTION` 管 XPM，与此无关。详见 §18/§18.1。
 - **可行路线 D = native child process**：appspawn 以应用身份起子进程，入口是 `libs/` 里 .so 的导出函数（走 dlopen，不需要 x 位/签名）。
   - ✅ **oracle 端到端已跑通**（真机）：`libdbx_agent_oracle.so`（Go c-shared，28MB）在子进程里回 `{"ready":true}` + `handshake`；ArkTS 与 Rust 两侧都验证过（Rust：`UnixStream::pair()` + `#[link(name="child_process")] OH_Ability_StartNativeChildProcess`）。
   - ✅ **2026-09-17 生产化完成**：`crates/dbx-core/src/db/agent_ncp.rs` + `agent_driver.rs` 的 `AgentProcess`/`SpawnedAgent`/`spawn_agent_io()` + `agent_manager.rs` 的 `ohos_bundled_agent_launch()`（`"oracle" => libdbx_agent_oracle.so:Main`）。同一个 `/api/connection/test` 从 `Permission denied (os error 13)` 变成 **`dial tcp 127.0.0.1:1521: connect: connection refused`**（= 子进程起来、handshake 通过、go-ora 真的拨号）。报告：`docs/ohos-oracle-driver-report.md`；细节：`docs/ohos-agent-exec-denied.md` §17。注意 release 重建实测 **45m42s**，HAP 69→**90MB**。
@@ -290,7 +290,7 @@ node /storage/Users/currentUser/deveco_tools/hvigor/bin/hvigorw.js \
 - **应用沙箱里"下载来的 ELF"不能执行**，两级拦截：
   1. 无代码签名 → `execve` 返回 `EACCES`（hilog：`code_protect/BSS … node: CheckSigned, ret: 1017604106`，伴随 `FillElfModuleJson: empty module.json buf`）；
   2. 即使签名（自签名或**用应用自己的证书签**都一样），**应用域仍返回 `EPERM`** —— 拒绝点是 BinSec `LoadBinCtrlAndManage`「parent process cannot load this binary」（`binaryType: 5, isCustomSandbox: 0, isAllowExt: 0`），**与签名身份无关**（A/B/C 对照见 `docs/ohos-agent-exec-denied.md` §18）。
-- **能跑原生代码的路**：**native child process**（本仓库已用，见 P0'）是唯一不需要华为侧授权的；**HNP** 是平台正路但要签名链路（本机 hvigor 插件无 hnp 逻辑、SDK 无 `hnpcli`）；`ohos.permission.CUSTOM_SANDBOX`（动态沙箱）是唯一可能让应用**直接 exec 沙箱 ELF** 的权限，未验证。`DISABLE_CODE_MEMORY_PROTECTION` 只关 XPM 代码完整性保护，与上面的二进制管控无关。
+- **能跑原生代码的路**：**native child process**（本仓库已用，见 P0'）是唯一不需要华为侧授权的；**HNP** 是平台正路但要签名链路（本机 hvigor 插件无 hnp 逻辑、SDK 无 `hnpcli`，且证书缺二进制证书扩展）。`ohos.permission.CUSTOM_SANDBOX` **已试过、走不通**（见 P0' 与 §18.1）；`DISABLE_CODE_MEMORY_PROTECTION` 只关 XPM，与二进制管控无关。
 - 所以：**agent 类驱动必须随 HAP 分发（NCP）**；JDBC/JRE 仍不可行（沙箱 `.so` 不能 dlopen + glibc JRE）。详见 `docs/ohos-agent-exec-denied.md`。
 
 ### JIT / 可执行内存权限（2026-09-16 查证官方文档 + 真机实测）
