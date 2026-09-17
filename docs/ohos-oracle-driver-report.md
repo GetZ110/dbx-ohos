@@ -239,6 +239,7 @@ E C05A06/bx:Native_libdbx_agent_oracle0/CODE_SIGN: [XpmIoctl]:Ioctl cmd 40087803
 
 - 解锁后重跑 Oracle 请求仍是 `dial tcp 127.0.0.1:1521: connect: connection refused`，子进程 `io.github.getz110.dbx:Native_libdbx_agent_oracle0`（pid 49794，uid 20020235）稳定复现。
   （注：装机后**第一次** warm 冒烟曾出现 `modules loaded` 1020ms / FCP 未抓到，紧接着重跑即 368ms / 1177ms 全过 —— 属装机后首启的系统抖动，不是回归。）
+- **冷缓存也补验过（`bm clean -c` 之后，2026-09-18 00:13）**：`modules loaded` **1608ms** / 页内 FCP **2846ms**，12/12 PASS（阈值 1700ms / 3000ms）。对照加 agent 之前的冷基线 1456–1589ms / ~2.7s，**28MB 的内置 agent 没有造成冷启动回归**。
 
 ### 6.5 驱动运行时的显式启停（第二次补验：`AgentDriverClient` 也已接入 NCP）
 
