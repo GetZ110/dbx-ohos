@@ -50,7 +50,7 @@ C05610/code_protect/BSS: [BinSec][svc:bin_common][FillElfModuleJson]:empty modul
 
 **不行，第 4 步就是这个实验**（而且是"在同一台机器上签好名再装进沙箱"，不是跨机预签）。两处澄清：
 
-* **不是"机器不对"**：早先流传"自签名绑定机器"，但该说法已被原始出处评论区更正（2026-08-19），且可核对：公开实现 `selfsign.rs`/`selfsign.c` 的签名只由 ELF 内容推导（SHA-256 + 按页 Merkle root + descriptor），**不读取任何机器信息**（无 `/proc`、无 env、无时间/随机数）。本次失败也发生在**同一台机器**上。真正的瓶颈是**签名身份**：自签名的 `.codesign` 是"自洽占位"，不携带应用身份；应用进程的代码内存保护只信任**随 HAP 安装、由应用证书（ownerId/证书链）授权**的代码。签名"内容合法"和"身份属于本应用"是两道不同的检查。
+* **不是"机器不对"**：早先流传"自签名绑定机器"，但该说法已被原始出处评论区更正（2026-08-19），且可核对：公开实现 `selfsign.rs`/`selfsign.c` 的签名只由 ELF 内容推导（SHA-256 + 按页 Merkle root + descriptor），**不读取任何机器信息**（无 `/proc`、无 env、无时间/随机数）。本次失败也发生在**同一台机器**上。~~真正的瓶颈是签名身份：自签名的 `.codesign` 是"自洽占位"，不携带应用身份；应用进程只信任随 HAP 安装、由应用证书授权的代码。~~ **2026-09-17 更正：不是签名身份的问题。** 见 §18 —— 用**应用自己的证书**（华为签发的开发证书 + profile，`binary-sign-tool` localSign 模式）重新签名后，应用域**仍然 `EPERM`**，拒绝点是 BinSec 的 `LoadBinCtrlAndManage`（二进制管控），与证书链/ownerId 无关。
 * **应用侧没有"运行时签名"的正规入口**：`SignLocalCode` / `EnforceCodeSignForFile` / `InitLocalCertificate` 只存在于 OpenHarmony `security_code_signature` 的 **inner API**（服务层，供 AOT 编译产物等系统场景使用）。本机 SDK 里没有对应的公开接口：`ets/api/` 无 sign/verify 模块，`native/` sysroot 也没有 `code_sign*` 头文件。应用也拿不到自己的签名私钥（在构建侧的证书/keystore 里）。
 
 所以"自行签名"不是方案 A 之外的新路，它**就是方案 B 的核心步骤**，缺的另一半是 `DISABLE_CODE_MEMORY_PROTECTION`（关掉应用域的代码内存保护检查）；加权限后是否接受自签名仍未验证，见 B3 的最小实验。若失败（即 EPERM 来自 SELinux exec 标签而非代码保护检查），则只剩 A（HNP）或 C。
@@ -696,3 +696,43 @@ PermissionName: ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY
 **驱动运行时启停也已验证**（第二次 rebuild 把 `AgentDriverClient` 一并接入 NCP；此前 `restart` 报 `Failed to spawn agent process libdbx_agent_oracle.so:Main: No such file or directory`）：`POST /api/agents/runtime/restart {"runtimeId":"agent:oracle"}` → `{"ok":true}`，`running_count=1`、`pid=53176`、`ps` 见子进程；`POST …/runtime/stop` → `{"ok":true}`，`stopped`、pid=None、**子进程退出无残留**（`NcpChild::kill()` + reaper 语义成立）。
 
 **内置驱动识别已通用化**（第三次 rebuild）：驱动列表把内置驱动报成 `installed=true / bundled=true / update_available=false`，卸载返回"随应用分发"的明确错误；探测目录从 `/proc/self/maps` 推导，**以后加驱动只需把 `.so` 放进 `entry/libs` 重建 HAP，不用重建 Rust `.so`**。用假 `libdbx_agent_cassandra.so`（14B）验证过探测生效（报告 §6.6）。
+
+## 18. 自签名 / 应用证书签名到底行不行：真机 A/B/C 对照（2026-09-17）
+
+针对"是不是自己签名就行、是不是要 DevEco 签名、还要不要别的权限"这个问题，做了一次**同一槽位的三级对照实验**：把三种版本的同一个 oracle agent 依次通过 `/api/agents/import-driver` 导入成 **`cassandra`**（非内置驱动 → 必然走沙箱 `execve` 路径），再 `POST /api/connection/test` 触发 spawn。
+
+| 版本 | 怎么来的 | `spawn_agent_process` 结果 |
+|---|---|---|
+| 未签名 | 上游 release 原始 ELF | `Permission denied (os error 13)` = **EACCES** |
+| 自签名 | `binary-sign-tool sign -selfSign 1`（§7 的命令） | `Operation not permitted (os error 1)` = **EPERM** |
+| **应用证书签名** | `binary-sign-tool sign`（localSign：`-appCertFile <本应用 .cer> -keystoreFile <本应用 .p12> -profileFile <本应用 .p7b> -keyAlias debugKey`）；`display-sign` 显示的是 **Huawei CBG Developer Relations CA G2 签发的开发证书**，不再是 "self-sign" | `Operation not permitted (os error 1)` = **EPERM**（与自签名完全一样） |
+
+关键 hilog（应用证书签名那次，`hdc hilog | grep code_protect`）：
+
+```
+W C05610/code_protect/BSS: [BinSec][svc:node_task][ExecuteTemplate]:node based task failed. node: CheckSigned, ret: 1017604106
+W C05610/code_protect/BSS: [BinSec][svc:bin_common][FillPermissionSection]:permission section not exist
+W C05610/code_protect/BSS: [BinSec][svc:bin_common][FillElfModuleJson]:empty module.json buf. maybe the permission section is empty
+E C05610/code_protect/BSS: [BinSec][svc:BL][LoadBinCtrlAndManage]:
+    parent process cannot load this binary. binaryType: 5, isCustomSandbox: 0, isAllowExt: 0
+W C05610/code_protect/BSS: [BinSec][svc:node_task][ExecuteTemplate]:node based task failed. node: LoadBinCtrlAndManage, ret: 1017604138
+```
+
+结论（推翻/修正 §3.1 的旧假设）：
+
+1. **签名确实生效了**：未签名 `EACCES` → 签名后 `EPERM`，说明 `CheckSigned` 那一关过了；换成**应用自己的证书**也是一样。
+2. **但拒绝点不是签名身份，而是 BinSec 的二进制管控 `LoadBinCtrlAndManage`**：`parent process cannot load this binary`，字段 `binaryType: 5, isCustomSandbox: 0, isAllowExt: 0`。也就是说：只要 ELF 落在应用数据目录、由应用进程 `execve`，普通应用就会被"二进制管控"拒绝——**签谁的名字都一样**。
+3. 所以"自己给驱动签名"这条路（无论自签名还是应用证书）**不成立**；"需要 DevEco 签名"的说法也不准确——DevEco/AGC 能给的是**权限（ACL）或 HNP 授权**，不是"签一下 ELF 就能跑"。
+
+**真正可能解锁的两条路**（都还没验证）：
+
+| 路线 | 依据 | 门槛 |
+|---|---|---|
+| **HNP**（把 ELF 打成 HNP 随 HAP 安装） | 系统把 HNP 内容登记进允许列表；Termony / DevBox / CodeArts 都用它跑 `bash`/`busybox` | 需要能产出合法 HNP 的签名链路（华为二进制证书扩展 + `signMap`）；本机 hvigor 插件不含 hnp 逻辑，已证伪（§9） |
+| **`ohos.permission.CUSTOM_SANDBOX`** | 官方描述："允许应用将沙箱类型改为动态沙箱"，`system_basic` / `availableType: NORMAL` / **`provisionEnable: true`** / since 18；日志里的 `isCustomSandbox: 0` 正好对应这个开关；华为自家终端 HiShell 就申请了它 | 需要 AGC 在签名 profile 的 `allowed-acls` 里放行（DevEco 自动签名可代申请）。**能否批、批了能否解锁 `LoadBinCtrlAndManage`，均未验证** |
+
+顺带排除的两条：
+- `ohos.permission.kernel.DISABLE_CODE_MEMORY_PROTECTION` 管的是**运行时代码完整性保护（XPM 写污点 / 可执行内存）**，不是二进制管控；本次拒绝发生在 `LoadBinCtrlAndManage` 节点，**大概率不解决**（未验证，但证据方向明确）。它和 `ALLOW_WRITABLE_CODE_MEMORY` 只对 JIT 有意义。
+- **`atm perm -g` 绕不过去**：设备上实测 `Error: Permission '…' is not requested by the application.` —— 权限必须先在 `module.json5` 里声明，而声明了没有 profile ACL 又会装机失败（`9568289`）。所以"不重签名、运行时授权"行不通。
+
+补充记录：`binary-sign-tool` 的 localSign 模式**需要 keystore 明文口令**，而 DevEco 把 `build-profile.json5` 里的口令加密成 `00000020…`；本次是用 hvigor 自带的 `hvigor-ohos-plugin/src/utils/decipher-util.js`（`DecipherUtil.decryptPwd` + `~/Documents/ohos/config/material/{fd,ce,ac}`）在本地 Node 进程里解密后传入签名工具的（口令不打印、不落盘）。这说明"用应用证书签 ELF"在开发机上是**可复现的**——只是复现出来也没用。

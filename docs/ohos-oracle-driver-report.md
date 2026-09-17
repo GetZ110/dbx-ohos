@@ -72,13 +72,36 @@ curl -s -X POST http://127.0.0.1:4224/api/connection/test \
 |---|---|---|---|---|
 | **A** | **HNP**（HarmonyOS Native Package，随 HAP 分发授权 ELF） | `hnp.json` + `bin/agent` 打 zip → `"hnpPackages"` | ❌ 本机装不上 | `ohos_packing_tool` 要求 HNP 带华为二进制证书扩展的 `signMap`；本机 hvigor 插件不带 hnp 逻辑、SDK 无 `hnpcli`；当前签名材料 `allowed-acls: []`，装机报 `9568289`。详见 §9 |
 | **A′** | 把 agent 放进 HAP `libs/` 再 `execve` | 驱动文件直接随 HAP 进 `libs/arm64-v8a/` | ❌ 同样执行不了 | 装后是 `0644`（无 x 位）；即使补位也是 BinSec 那一层。详见 §12 |
-| **B** | 受限权限 + 运行时自签名（`DISABLE_CODE_MEMORY_PROTECTION` / `ALLOW_WRITABLE_CODE_MEMORY`） | `module.json5` 声明 ACL | ❌ 装不上 | `code:9568289 install failed due to grant request permissions failed`（profile ACL 为空）；调试期可走 DevEco 自动签名代申请，但本机无法替代。详见 §10、§15.2 |
+| **B** | 受限权限 + 运行时自签名（`DISABLE_CODE_MEMORY_PROTECTION` / `ALLOW_WRITABLE_CODE_MEMORY`） | `module.json5` 声明 ACL | ❌「签名」这半条已彻底证伪；「权限」半条待验证 | 未签名 `EACCES(13)` → 自签名 `EPERM(1)` → **用应用自己的证书（华为签发开发证书 + profile）签名仍 `EPERM(1)`**；拒绝点是 BinSec `LoadBinCtrlAndManage`（二进制管控），与证书身份无关。详见 §3.1 与 `docs/ohos-agent-exec-denied.md` §18 |
 | **C** | 暂不支持，文档写明限制 | — | 备选 | — |
 | **D** | **native child process**（appspawn `dlopen` HAP `libs/` 的 `.so`） | 子进程入口 `void Main(NativeChildProcess_Args)`，fd 传 socketpair | ✅ **可行，且已打通 oracle** | 本轮实测，见 §5/§6 |
 | **E** | JDBC 走进程内 JVM（`dlopen(libjvm.so)` + `JNI_CreateJavaVM`） | 在 NCP 子进程里起 JVM | ❌ 三重卡死 | ① 沙箱 `.so` `dlopen` 返回 `EINVAL`（只有 HAP `libs/` 能 dlopen）；② JIT 默认被禁（`mmap RWX`/`mprotect RX` 全 `EINVAL`，需受限 ACL）；③ 官方 JRE 是 **glibc**，OHOS 只有 musl。详见 §15 |
 | **D′** | 进程内 `dlopen` agent（不开子进程） | 在主进程 dlopen `libs/` 的 agent `.so` | ⚪ 未采用（D 更干净） | §15.1 已证明 HAP `libs/` 的 `.so` 可以 dlopen；但同一个 Go runtime 塞进主进程会和 tokio/信号/多实例耦合，子进程隔离更稳 |
 
 **平台正路只有 D（和 A 的变体）**：这两条都绕开 `execve`。A 需要华为侧签名材料，D 不需要。
+
+### 3.1 自签名 / 应用证书签名到底行不行（2026-09-17 真机 A/B/C 对照）
+
+针对"是不是自己签名就行、是不是要 DevEco 签名、还要不要别的权限"，用**同一个槽位**（`cassandra`，非内置驱动 → 必走沙箱 `execve`）依次导入三个版本：
+
+| 版本 | 来源 | `spawn_agent_process` 结果 |
+|---|---|---|
+| 未签名 | 上游 release 原始 ELF | `Permission denied (os error 13)` = **EACCES** |
+| 自签名 | `binary-sign-tool sign -selfSign 1` | `Operation not permitted (os error 1)` = **EPERM** |
+| **应用证书签名** | `binary-sign-tool sign` localSign：本应用 `.cer` + `.p12` + `.p7b` + `-keyAlias debugKey`；`display-sign` 显示 **Huawei CBG Developer Relations CA G2 签发的开发证书** | `Operation not permitted (os error 1)` = **EPERM**（与自签名一模一样） |
+
+拒绝点 hilog：
+
+```
+E C05610/code_protect/BSS: [BinSec][svc:BL][LoadBinCtrlAndManage]:
+    parent process cannot load this binary. binaryType: 5, isCustomSandbox: 0, isAllowExt: 0
+```
+
+**结论**：签名确实生效了（`EACCES` → `EPERM`），但应用域拒绝的真正原因是 **BinSec 的二进制管控**（"parent process cannot load this binary"），**不是证书身份** —— 签成应用自己的证书也没用。所以"自己签驱动"这条路不成立；"需要 DevEco 签名"的说法也不准确，DevEco/AGC 能给的是**权限（ACL）或 HNP 授权**。
+
+**可能解锁的两条路（均未验证）**：① **HNP**（把 ELF 随 HAP 安装，系统登记进允许列表；本机缺签名链路，已证伪 §9）；② **`ohos.permission.CUSTOM_SANDBOX`**（"允许应用将沙箱类型改为动态沙箱"，`system_basic`/`availableType: NORMAL`/`provisionEnable: true`/since 18；日志里的 `isCustomSandbox: 0` 正对应它；华为自家终端 HiShell 就申请了它），需要 AGC 在 profile ACL 里放行。
+
+**排除的两条**：`DISABLE_CODE_MEMORY_PROTECTION` 管的是运行时代码完整性保护（XPM），不是二进制管控，大概率无效；`atm perm -g` 也绕不过（设备实测 `Permission '…' is not requested by the application.`，而声明了没有 ACL 又会装机失败 `9568289`）。
 
 ---
 
