@@ -264,7 +264,7 @@ Failed to spawn agent process libdbx_agent_oracle.so:Main: No such file or direc
 
 前两次都靠 `agent_manager.rs` 里的**硬编码列表**把 `oracle` 映射到内置库；这意味着以后每加一个驱动都要重建 46MB 的 Rust `.so`。这一轮把它改成**通用发现**：
 
-1. `ohos_bundled_agent_library(key)`：先查已知列表，未命中则**探测 HAP `libs/` 目录**里有没有 `libdbx_agent_<key>.so`。探测目录不是写死的，而是从 `/proc/self/maps` 里 `libdbx_ohos.so` 自身的加载路径推导（带 `/data/storage/el1/bundle/libs/arm64` 兜底），并用 `OnceLock` 缓存。
+1. `ohos_bundled_agent_library(key)`：先查已知列表，未命中则**探测 HAP `libs/` 目录**里有没有 `libdbx_agent_<key>.so`。探测目录不写死：**首选 `dladdr()`**（对本库内一个 `static` 取地址，由动态链接器报出 `libdbx_ohos.so` 的真实加载路径 —— 与 VintagePomeloPro 同款做法），再用 `/proc/self/maps` 和 `/data/storage/el1/bundle/libs/arm64` 兜底；结果用 `OnceLock` 缓存。
    → **收益：以后加驱动只要把 `.so` 丢进 `entry/libs/arm64-v8a/` 重建 HAP（约 10s），不用再重建 46MB 的 Rust `.so`。**
 2. 驱动列表把内置驱动当成**已安装**：`installed=true`、`bundled=true`（新增字段，前端旧版本会忽略未知字段）、`installed_version="bundled"`、`update_available=false`；`/api/agents/installed/{dbType}` 返回 `true`；`uninstall` 返回明确错误。
 
@@ -278,6 +278,8 @@ Failed to spawn agent process libdbx_agent_oracle.so:Main: No such file or direc
 | `GET /api/agents/installed/oracle` | `true` |
 
 **探针本身也验证过**（关键，否则"以后加驱动不用重建 Rust"只是推测）：往 `entry/libs/arm64-v8a/` 放一个名字匹配 `cassandra` 的假 `.so`（14 字节，不在已知列表），只重建 HAP（10s）并安装 —— 驱动列表里 `cassandra` 立刻变成 `installed=true, bundled=true`；删掉假文件重装后回到 `installed=false, bundled=false`。说明探测逻辑真的在读 HAP `libs/`。
+
+**改成 `dladdr` 后又复验了一遍（2026-09-17，第 4 次 rebuild）**：同一个假 `.so` 实验重跑通过；oracle 的 `/api/connection/test` 仍是 `dial tcp 127.0.0.1:1521: connect: connection refused`（NCP 链路未受影响）；启动冒烟 **12/12 PASS**（`modules loaded` 323ms / FCP 1120ms）。
 
 启动回归再跑 **12/12 PASS**（`modules loaded` 317ms / FCP 1081ms）。
 
