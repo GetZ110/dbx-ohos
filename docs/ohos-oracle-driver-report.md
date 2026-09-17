@@ -116,7 +116,7 @@ curl -s -X POST http://127.0.0.1:4224/api/connection/test \
 |---|---|
 | `crates/dbx-core/src/db/agent_ncp.rs`（新增） | `#[link(name="child_process")]` 调 `OH_Ability_StartNativeChildProcess` / `OH_Ability_KillChildProcess`；建 `socketpair`、把子端放进 `fdList`；`NcpChild` 实现 `id/kill/wait/try_wait`（appspawn 子进程不是本进程的 POSIX 子进程，用 `shutdown` + `KillChildProcess` 而不是 `waitpid`） |
 | `crates/dbx-core/src/db/mod.rs` | 注册 `pub mod agent_ncp;` |
-| `crates/dbx-core/src/db/agent_driver.rs` | 新增 `AgentProcess`（`Child` / `Ncp`）与 `SpawnedAgent`；把 `AgentRuntimeClient` 的 `child`/`stdin`/`stdout` 从具体 `Child*` 类型改成枚举 + `Box<dyn Read/Write + Send>`；新增 `spawn_agent_io()`（OHOS 上优先走 NCP，其余平台完全走原路径）；`AgentLaunchSpec` 加 `ncp_entry` 字段与 `AgentLaunchSpec::ncp()` |
+| `crates/dbx-core/src/db/agent_driver.rs` | 新增 `AgentProcess`（`Child` / `Ncp`）与 `SpawnedAgent`；把 `AgentRuntimeClient` 与 `AgentDriverClient` 的 `child`/`stdin`/`stdout` 从具体 `Child*` 类型改成枚举 + `Box<dyn Read/Write + Send>`；新增 `spawn_agent_io()`（OHOS 上优先走 NCP，其余平台完全走原路径）；`AgentLaunchSpec` 加 `ncp_entry` 字段与 `AgentLaunchSpec::ncp()` |
 | `crates/dbx-core/src/agent_manager.rs` | OHOS 专属 `ohos_bundled_agent_launch(driver_key)`：把 `oracle` 映射到 `libdbx_agent_oracle.so:Main`，在 `resolve_agent_launch_spec_with_extra_args()` 最前面短路返回 |
 
 设计上**不影响非 OHOS 目标**：所有 NCP 代码都在 `#[cfg(target_env = "ohos")]` 里，桌面/服务器仍走原来的 `Child` + 管道。
@@ -214,6 +214,27 @@ E C05A06/bx:Native_libdbx_agent_oracle0/CODE_SIGN: [XpmIoctl]:Ioctl cmd 40087803
   ```
 
 - 解锁后重跑 Oracle 请求仍是 `dial tcp 127.0.0.1:1521: connect: connection refused`，子进程 `io.github.getz110.dbx:Native_libdbx_agent_oracle0`（pid 49794，uid 20020235）稳定复现。
+  （注：装机后**第一次** warm 冒烟曾出现 `modules loaded` 1020ms / FCP 未抓到，紧接着重跑即 368ms / 1177ms 全过 —— 属装机后首启的系统抖动，不是回归。）
+
+### 6.5 驱动运行时的显式启停（第二次补验：`AgentDriverClient` 也已接入 NCP）
+
+第一次测 `/api/agents/runtime/restart` 时暴露了一个缺口：**驱动管理器的"运行/重启"按钮走的是另一条 spawn 路径**（`AgentDriverClient`，即 `spawn_client_for_key`），当时还没接入 NCP，返回：
+
+```
+Failed to spawn agent process libdbx_agent_oracle.so:Main: No such file or directory (os error 2)
+```
+
+把 `AgentDriverClient` 也改成用 `spawn_agent_io()` 后（`AgentProcess` 抽象对两套客户端都生效），重新打包验证：
+
+| 步骤 | 结果 |
+|---|---|
+| `POST /api/agents/runtime/restart {"runtimeId":"agent:oracle"}` | `{"ok":true}` |
+| `GET /api/agents/runtime` | `running_count=1`，`agent:oracle running pid=53176` |
+| `ps` | `io.github.getz110.dbx:Native_libdbx_agent_oracle0`（pid 53176，父 53175，uid 20020235） |
+| `POST /api/agents/runtime/stop {"runtimeId":"agent:oracle"}` | `{"ok":true}` |
+| `GET /api/agents/runtime` / `ps` | `stopped`，pid=None，**子进程已退出、无残留** |
+
+即 `NcpChild::kill()`（`shutdown` socket + `OH_Ability_KillChildProcess`）与 reaper 语义在真机上成立。
 
 ---
 

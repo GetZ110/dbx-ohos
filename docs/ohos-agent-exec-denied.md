@@ -678,7 +678,7 @@ PermissionName: ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY
 改动（与 §16.3 的设想略有不同，更小）：
 
 1. **新增 `crates/dbx-core/src/db/agent_ncp.rs`**：`#[link(name="child_process")]` 调 `OH_Ability_StartNativeChildProcess` / `OH_Ability_KillChildProcess`，建 `socketpair` 并把子端放进 `fdList`。`NcpChild::kill()` 用 `shutdown` + `KillChildProcess`（appspawn 子进程不是本进程的 POSIX 子进程，不能 `waitpid`），`wait()` 直接返回（关闭 socket 即让 agent 读到 EOF 自行退出）。
-2. **`db/agent_driver.rs`**：新增 `AgentProcess { Child, Ncp }` 与 `SpawnedAgent { process, stdin: Box<dyn Write+Send>, stdout/stderr: Box<dyn Read+Send> }`；只把 **`AgentRuntimeClient`**（oracle 实际走的共享运行时）改用 `spawn_agent_io()`，`AgentDriverClient` 保持原样，所以改动面比"两套都抽象"小得多。`AgentLaunchSpec` 加 `ncp_entry: Option<String>` + `AgentLaunchSpec::ncp()`。
+2. **`db/agent_driver.rs`**：新增 `AgentProcess { Child, Ncp }` 与 `SpawnedAgent { process, stdin: Box<dyn Write+Send>, stdout/stderr: Box<dyn Read+Send> }`；`AgentRuntimeClient` 与 `AgentDriverClient` **都**改用 `spawn_agent_io()`（前者是连接路径，后者是驱动管理器"运行/重启"的 daemon 路径）。`AgentLaunchSpec` 加 `ncp_entry: Option<String>` + `AgentLaunchSpec::ncp()`。
 3. **`agent_manager.rs`**：`#[cfg(target_env = "ohos")] fn ohos_bundled_agent_launch(driver_key)`，在 `resolve_agent_launch_spec_with_extra_args()` 最前面短路：`"oracle" => libdbx_agent_oracle.so:Main`。
 4. 非 OHOS 目标零影响：NCP 代码全在 `#[cfg(target_env = "ohos")]` 内。
 
@@ -691,4 +691,6 @@ PermissionName: ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY
 
 **未做**：① 其余 13 个 Go agent 铺开；② 驱动管理 UI 把内置驱动标成"内置/已安装"（需要重建 dist）；③ 完整 Oracle 实例的 `SELECT 1 FROM dual`（本机没有数据库）。
 
-**已补验**（解锁设备后，2026-09-17 07:42）：`startup_smoke.sh --mode warm` **12/12 PASS**（`modules loaded` 359ms / FCP 1216ms，`Local service ready` 121ms）；重启应用后重跑 Oracle 请求仍是 `dial tcp 127.0.0.1:1521: connect: connection refused`，子进程 `Native_libdbx_agent_oracle0` 稳定复现。**启动与连接链路都无回归。**
+**已补验**（解锁设备后，2026-09-17）：`startup_smoke.sh --mode warm` **12/12 PASS**（`modules loaded` 359ms / FCP 1216ms，`Local service ready` 121ms）；重启应用后重跑 Oracle 请求仍是 `dial tcp 127.0.0.1:1521: connect: connection refused`，子进程 `Native_libdbx_agent_oracle0` 稳定复现。**启动与连接链路都无回归。**
+
+**驱动运行时启停也已验证**（第二次 rebuild 把 `AgentDriverClient` 一并接入 NCP；此前 `restart` 报 `Failed to spawn agent process libdbx_agent_oracle.so:Main: No such file or directory`）：`POST /api/agents/runtime/restart {"runtimeId":"agent:oracle"}` → `{"ok":true}`，`running_count=1`、`pid=53176`、`ps` 见子进程；`POST …/runtime/stop` → `{"ok":true}`，`stopped`、pid=None、**子进程退出无残留**（`NcpChild::kill()` + reaper 语义成立）。
