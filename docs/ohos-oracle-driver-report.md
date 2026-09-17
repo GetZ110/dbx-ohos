@@ -342,6 +342,33 @@ curl -s -X POST http://127.0.0.1:4224/api/connection/test -H 'content-type: appl
 
 ---
 
+## 10. 如果以后要把别的驱动也做成内置（配方；当前只内置 oracle）
+
+**结论先说**：Go/Rust 类 agent 可以机械复制 oracle 的做法；**Java/JDBC 类不行**（要 JVM）；而且 `.so` **必须随 HAP 安装**，不能运行时下载再 `dlopen`（沙箱里的 `.so` `dlopen` 返回 `EINVAL`，只有 HAP `libs/` 能 dlopen）。
+
+每个新驱动三件事：
+
+1. `agents/drivers/<x>-go/main.go`：`main()` 拆成 `main(){ runStdioAgent() }` + `runStdioAgent()`（原 stdio JSON-RPC 循环一个字都不用改）；
+2. 新增 `ohos_ncp.go`（`//go:build ohos_ncp` + `//export dbxAgentRun`），并**复用 oracle 的 `ohos_ncp_shim.c`**（fd→0/1 + emutls 的 `dbxLoadG/dbxSaveG`）；
+3. 构建、打包、验证（**Rust 侧零改动**，通用探测会自动发现）：
+
+```bash
+./harmony/tools/build_agent_cshared.sh <x>-go libdbx_agent_<key>.so
+NDK=/storage/Users/currentUser/.harmonybrew/Cellar/ohos-sdk/26.0.0.18_1/native
+$NDK/llvm/bin/llvm-readelf -r harmony/dbxohos/entry/libs/arm64-v8a/libdbx_agent_<key>.so | grep -i TLS   # 应为空
+$NDK/llvm/bin/llvm-readelf --dyn-syms harmony/dbxohos/entry/libs/arm64-v8a/libdbx_agent_<key>.so | grep ' Main$'
+# 只重建 HAP（约 10s，不用重建 46MB 的 libdbx_ohos.so）
+node /storage/Users/currentUser/deveco_tools/hvigor/bin/hvigorw.js --mode module -p product=default --no-daemon assembleHap
+hdc -t 127.0.0.1:43817 install -r harmony/dbxohos/entry/build/default/outputs/default/entry-default-signed.hap
+```
+
+验收：`GET /api/agents/installed-local` 里该驱动应为 `installed=true, bundled=true`（探测自动发现）；对它跑一次 `POST /api/connection/test`，期望是**驱动层的连接错误**（如 `connection refused`）而不是 `EACCES/EPERM`。
+
+- **命名/别名**：`db_type` → `libdbx_agent_<db_type>.so`；`kyuubi`/`impala` 映射到 `libdbx_agent_hive.so`（见 `ohos_bundled_agent_library`）。一个产物可覆盖多个连接类型。
+- **体积**：每个 Go c-shared ≈28MB 未压缩 / ≈21MB 压缩进 HAP；当前 HAP ≈90MB（含 oracle）。14 个 Go agent 全铺约 +270MB，**单包不现实**，要上就得做 feature HAP / 按需下发。
+- **Java/JDBC 类**（达梦 / highgo / uxdb / databend / saphana… 及所有 JDBC 插件）：需要 JVM，当前三重卡死（沙箱 `.so` 不能 dlopen、官方 JRE 是 glibc、JIT 需 ACL），`.so` 方案不适用。
+- **Rust agent**（duckdb / tdengine）：编 cdylib 导出 `Main`，没有 Go 的 musl TLS/argv 两个坑，理论上是更简单的路径。
+
 ## 附录 A：本轮"失败/被证伪"路线的原始证据（摘要）
 
 - **HNP 装不上**（§9）：`ohos_packing_tool` 的 HNP 打包要求带证书扩展的 `signMap`；本机 hvigor 插件无 hnp 代码、SDK 无 `hnpcli`；profile `allowed-acls: []`。
