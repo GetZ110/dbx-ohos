@@ -24,7 +24,7 @@ dbx-ohos/                     # 父仓库，只有 main 一个分支，直接在
 ## 当前状态（2026-09-13；包名/签名一节 2026-09-16 更新）
 
 - **包名（2026-09-16 改名 + 重签名，已验证）**：`io.github.getz110.dbx`（原 `com.dbx.ohos` —— 末段 `ohos` 是 AGC 保留字，不合规）。用 **DevEco Studio 自动签名**对新包名重签完成：profile 换成 `~/Documents/ohos/config/default_dbxohosdUZI6Tr9cHl_4UaRvJYTYdNNEYSb0rK5vsYaH3PWw2Q.{cer,p7b,p12}`（内部 `"bundle-name":"io.github.getz110.dbx"`、`"allowed-acls":["ohos.permission.READ_WRITE_DOCUMENTS_DIRECTORY"]`），DevEco 同时改写了 `build-profile.json5` 的 `signingConfigs`。之后 CLI `assembleHap` **`SignHap` 通过**，签名/未签名包 `pack.info` 均为新包名（69,018,553 / 68,605,764 字节，`version 1.3.3 / 1003003`），`./dev-run.sh --skip-build` 装机启动正常，两轮真机日志离线复跑启动冒烟各 **12/12 PASS**。**注意：签名 profile 与包名绑死，再改包名必须重做签名**（不改就会 `SignHap` 报 `00303074`）。**开 DevEco 前先 `harmony/tools/hvigor_links.sh off`，回 CLI 前 `on`**（否则 DevEco 同步报 `00302013`，见「DevEco Studio 与命令行构建的冲突」）。改名后是**全新的应用身份**：老 `com.dbx.ohos` 已手动卸载，数据（连接/驱动/JRE）**没有迁移**，历史 `release/*.hap` 仍是老包名。详见「构建命令 → 改包名（bundleName）」。
-- **版本**：`AppScope/app.json5` = `versionName 1.3.3 / versionCode 1003003`，**已于 2026-09-13 发布到 GitHub release**（tag `v1.3.3-dbx0.6.9`，Latest；hotfix：结果表格第一行被表头压住 + 切 Canvas 丢表头）。上一版是 `1.3.2 / 1003002`（tag `v1.3.2-dbx0.6.9`，资产未被覆盖）。上游仍是 dbx v0.6.9，dist/.so 未重建。
+- **版本**：`AppScope/app.json5` = `versionName 1.3.4 / versionCode 1003004`，**已于 2026-09-18 发布到 GitHub release**（tag `v1.3.4-dbx0.6.9`，Latest；新增 **Oracle 内置驱动 / native child process**）。上一版 `1.3.3 / 1003003`（tag `v1.3.3-dbx0.6.9`，资产未被覆盖）。上游仍是 dbx v0.6.9；本次重建了 `libdbx_ohos.so` 并新增 `libdbx_agent_oracle.so`（HAP 69→90MB）。
 - **启动指标**（真机 HUAWEI MateBook Pro / HAD-W32，`force-stop` + `aa start`）：
 
   | 场景 | `frontend modules loaded` | 页内 FCP | 进程创建→FCP |
@@ -209,6 +209,7 @@ node /storage/Users/currentUser/deveco_tools/hvigor/bin/hvigorw.js \
 - **还没做**：① 其余 13 个 Go agent 机械铺开（每个 `main()`→`runStdioAgent()` + `ohos_ncp.go`，共用 shim；`duckdb`/`tdengine` 是 Rust agent 走 cdylib）；② 前端 dist 重建以显示"内置"标签（可选）；③ JRE 内嵌 JVM；④ `compressNativeLibs` 与 feature HAP 控体积（HAP 已 90MB，每个 Go agent 压缩后 +20~28MB）。
 - **启动回归已补验（2026-09-17）**：`startup_smoke.sh --mode warm` **12/12 PASS**（`modules loaded` 359ms / FCP 1216ms），加 28MB agent `.so` 后启动无回归。**驱动运行时启停也验过**：`AgentDriverClient`（驱动管理器"运行/重启"的 daemon 路径，`spawn_client_for_key`）也已接入 `spawn_agent_io()`；`/api/agents/runtime/restart|stop {"runtimeId":"agent:oracle"}` 均 `{"ok":true}`，`running pid=53176` ↔ `stopped` + 子进程无残留。**注意两条 spawn 路径都要接 NCP，只改 `AgentRuntimeClient` 会让 daemon 报 `libdbx_agent_oracle.so:Main: No such file or directory`。**
 - 完整证据链/失败码/复现命令/脚手架清单见 `docs/ohos-agent-exec-denied.md` **§9–§17**（§13 spike、§14 Go+Rust 打通、§15 JDBC、§16 现状、§17 生产化实测）。
+- ✅ **1.3.4 已发布（2026-09-18）**：GitHub release `v1.3.4-dbx0.6.9`（Latest，`--target main` → 版本提交 `ecb64bf`），资产 `DBX_HarmonyOS_v1.3.4_dbx0.6.9_unsigned.hap` 89,559,077 B / SHA-256 `9dd35c69…3da6a`，与线上 digest 一致；v1.3.3/v1.3.2 资产未被覆盖。发布前真机复验：暖启动冒烟 12/12（330ms/1105ms）、`bm clean -c` 真冷启动 12/12（1608ms/2846ms）、oracle 连接返回 `connection refused`（子进程起、拨号成功）、驱动 restart/stop 均 `{"ok":true}`、`dladdr` 内置驱动探测正常。`harmony/tools/build_agent_cshared.sh` + `go_ohos_overlay.py` 已入库，可复现构建。
 
 ### P1 二选一（按真实痛点）
 
@@ -343,13 +344,13 @@ node /storage/Users/currentUser/deveco_tools/hvigor/bin/hvigorw.js \
 ### 发版
 
 - **release 只挂未签名包**：签名 HAP 含 debug profile（绑定设备 UDID），不可公开发布。
-- 每次发版先把 `AppScope/app.json5` 的 `versionName`/`versionCode` 升到与 release 版本一致（当前基线 1.3.3 ↔ 1003003；1.3.2 ↔ 1003002 是上一个已发布版本），再构建并替换 release 资产，保证未签名 hap 的包内版本与 release tag 对齐（2026-08-28、2026-09-10、2026-09-13 均按此流程）。
-- **tag 与 release 一起建**：`gh release create <tag> --target main --latest`（本次 `v1.3.3-dbx0.6.9` → 版本提交 `deab2fd`）；建完在父仓库 `git fetch --tags origin` 把 tag 同步到本地，并用 `gh release view --json assets` 核对线上 digest 与本地 `sha256sum` 一致。
+- 每次发版先把 `AppScope/app.json5` 的 `versionName`/`versionCode` 升到与 release 版本一致（当前基线 1.3.4 ↔ 1003004；1.3.3 ↔ 1003003 是上一个已发布版本），再构建并替换 release 资产，保证未签名 hap 的包内版本与 release tag 对齐（2026-08-28、2026-09-10、2026-09-13、2026-09-18 均按此流程）。
+- **tag 与 release 一起建**：`gh release create <tag> --target main --latest`（本次 `v1.3.4-dbx0.6.9` → 版本提交 `ecb64bf`，资产 `DBX_HarmonyOS_v1.3.4_dbx0.6.9_unsigned.hap` 89,559,077 B / SHA-256 `9dd35c69…3da6a`）；建完在父仓库 `git fetch --tags origin` 把 tag 同步到本地，并用 `gh release view --json assets` 核对线上 digest 与本地 `sha256sum` 一致。
 - **核实包内版本**（打包后必查，`pack.info` 是 `version` 嵌套结构，不是平铺字段）：
   ```bash
   unzip -o -q <hap> pack.info module.json -d .tmp/hapcheck
   python3 -c "import json;d=json.load(open('.tmp/hapcheck/pack.info'));print(d['summary']['app'])"
-  # → {'bundleName': 'io.github.getz110.dbx', 'version': {'code': 1003003, 'name': '1.3.3'}}
+  # → {'bundleName': 'io.github.getz110.dbx', 'version': {'code': 1003004, 'name': '1.3.4'}}
   ```
 
 ## 同步上游（t8y2/dbx main → harmonyos-port）
