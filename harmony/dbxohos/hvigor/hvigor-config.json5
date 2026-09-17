@@ -2,6 +2,11 @@
   "modelVersion": "6.1.0",
   "dependencies": {
   },
+  // 【体积实验】压缩 HAP 内的 native 库（hvigor 只在设置了该属性时把
+  // module.compressNativeLibs 置为 true）。fast|standard|ultimate → zip level 1|5|9。
+  "properties": {
+    "ohos.pack.compressLevel": "standard",
+  },
   "execution": {
     // "analyze": "normal",                     /* Define the build analyze mode. Value: [ "normal" | "advanced" | false ]. Default: "normal" */
     // "daemon": true,                          /* Enable daemon compilation. Value: [ true | false ]. Default: true */

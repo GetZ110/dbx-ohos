@@ -15,7 +15,7 @@
 | 报错 `Failed to spawn agent process …/oracle/agent: Permission denied (os error 13)` 是什么？ | 不是文件权限位问题，是 **HarmonyOS 6 的 BinSec/`code_protect` 强制 ELF 代码签名**：沙箱里"下载来的、不含应用身份的 ELF"不允许 `execve` |
 | 有没有可行路线？ | **有**。平台正路是 **native child process**（`OH_Ability_StartNativeChildProcess`）：appspawn 直接 `dlopen` HAP `libs/` 里的 `.so`，不经过 `execve`，**不需要任何华为证书、签名或受限 ACL** |
 | 实际验证了吗？ | 已验证。把 oracle agent 编成 `libdbx_agent_oracle.so`（Go c-shared）打进 HAP，应用侧改走 NCP 传输；真机上 Oracle 连接从 `Permission denied` 变成 **`dial tcp 127.0.0.1:1521: connect: connection refused`**（= agent 真的跑起来并去连数据库了） |
-| 代价 | `.so` 重建一次约 46 分钟（LTO）；HAP 从 69MB → 90MB（oracle agent 压缩后 20.9MB）；每个要支持的驱动都要单独编一份 c-shared |
+| 代价 | `.so` 重建一次约 46 分钟（LTO）；HAP 从 69MB → 90MB（oracle agent strip 后 20.9MB；**开启 native 库压缩后整个包 49MB，见 §11**）；每个要支持的驱动都要单独编一份 c-shared |
 | 仍不可行 | **JDBC/JRE 类驱动**（沙箱 `.so` 不能 `dlopen` + JRE 是 glibc + JIT 内存受限）；**HNP** 路线（缺签名材料与工具链，见 §3）；其余 13 个 Go agent 需要机械铺开 |
 
 ---
@@ -300,9 +300,9 @@ Failed to spawn agent process libdbx_agent_oracle.so:Main: No such file or direc
 ## 8. 结论与建议
 
 1. **Oracle 已可在 HarmonyOS 上连**（方案 D）。从"下载驱动 → 点连接"这条产品路径看，剩下的只是把传输层接进产品 UI：内置驱动应显示"已安装（内置）+ 版本"，并禁用"卸载/升级"。
-2. **成本主要在 `.so` 重建**（LTO release 一次约 46 分钟）与 **HAP 体积**（每个 agent +20~28MB 压缩前）。建议：
-   - 短期只内置 **oracle**（HAP 69 → 90MB）；
-   - 其余 13 个 Go agent 机械铺开（`hive` 一个产物覆盖 hive/kyuubi/impala），但先评估体积，或走 **feature HAP 按需安装**；
+2. **成本主要在 `.so` 重建**（LTO release 一次约 46 分钟）与 **HAP 体积**（每个 agent strip 后约 21MB，**开启 native 库压缩后每个只 +约 5.2MB**，见 §11）。建议：
+   - 短期只内置 **oracle**（HAP 69 → 90MB；开启压缩后 **49MB**）；
+   - 其余 13 个 Go agent 机械铺开（`hive` 一个产物覆盖 hive/kyuubi/impala），压缩后全铺约 +68MB，单包已不再离谱，但仍建议按需选几个或走 **feature HAP 按需安装**；
    - `duckdb`/`tdengine` 是 Rust agent，可做 cdylib 导出 `Main`，没有 Go 的 TLS/argv 问题。
 3. **JDBC/JRE 类驱动仍不可行**（沙箱 `.so` 不能 `dlopen` + glibc JRE + JIT 受限）；要做得先有 OHOS/musl 版 OpenJDK，属于长期项。
 4. **上游同步成本**：改动集中在 `dbx-core` 的 `agent_driver.rs` / `agent_manager.rs`（上游高频改动区），已尽量用 `#[cfg(target_env = "ohos")]` 隔离与短路；同步时按 AGENTS.md 的「保住本地补丁」清单核对。
@@ -368,9 +368,51 @@ hdc -t 127.0.0.1:43817 install -r harmony/dbxohos/entry/build/default/outputs/de
 验收：`GET /api/agents/installed-local` 里该驱动应为 `installed=true, bundled=true`（探测自动发现）；对它跑一次 `POST /api/connection/test`，期望是**驱动层的连接错误**（如 `connection refused`）而不是 `EACCES/EPERM`。
 
 - **命名/别名**：`db_type` → `libdbx_agent_<db_type>.so`；`kyuubi`/`impala` 映射到 `libdbx_agent_hive.so`（见 `ohos_bundled_agent_library`）。一个产物可覆盖多个连接类型。
-- **体积**：每个 Go c-shared ≈28MB 未压缩 / ≈21MB 压缩进 HAP；当前 HAP ≈90MB（含 oracle）。14 个 Go agent 全铺约 +270MB，**单包不现实**，要上就得做 feature HAP / 按需下发。
+- **体积**：每个 Go c-shared ≈28MB 未压缩、strip 后 ≈21MB；**HAP 开启 `compressNativeLibs` 后进包只 +约 5.2MB**（当前含 oracle 的整包 49MB）。14 个 Go agent 全铺约 +68MB（压缩前 ~270MB），仍建议按需选几个或做 feature HAP / 按需下发。压缩的开启方式与实测见 §11。
 - **Java/JDBC 类**（达梦 / highgo / uxdb / databend / saphana… 及所有 JDBC 插件）：需要 JVM，当前三重卡死（沙箱 `.so` 不能 dlopen、官方 JRE 是 glibc、JIT 需 ACL），`.so` 方案不适用。
 - **Rust agent**（duckdb / tdengine）：编 cdylib 导出 `Main`，没有 Go 的 musl TLS/argv 两个坑，理论上是更简单的路径。
+
+## 11. HAP 内 native 库压缩（2026-09-18：90MB → 49MB，已启用）
+
+**问题**：加进 oracle agent 后 HAP 到 89.5MB，其中 `libs/arm64-v8a/` 两个 `.so` 就占 67.4MB，而且**在 HAP（zip）里是 `Stored`（完全不压缩）**：
+
+```
+$ unzip -v DBX_HarmonyOS_v1.3.4_dbx0.6.9_unsigned.hap | grep libs/
+46504960  Stored 46504960   0%  libs/arm64-v8a/libdbx_ohos.so
+20924088  Stored 20924088   0%  libs/arm64-v8a/libdbx_agent_oracle.so
+```
+
+**开法**：hvigor 只认 `hvigor-config.json5` 里的属性（`harmony/dbxohos/hvigor/hvigor-config.json5`）：
+
+```json5
+{
+  "modelVersion": "6.1.0",
+  "properties": {
+    "ohos.pack.compressLevel": "standard",   // fast|standard|ultimate → zip level 1|5|9
+  },
+  // …
+}
+```
+
+`hvigor-ohos-plugin` 的 `MergeProfile` 逻辑是 `getPropertiesConfigValue("ohos.pack.compressLevel") && (module.compressNativeLibs = true)`，随后 packing tool 按该字段决定是否 Deflate native 库。
+
+**坑**：`MergeProfile` 的增量判定没把这个属性算进输入，改完直接 `assembleHap` 会因 UP-TO-DATE 不重写 merged `module.json`，看起来"属性没生效"（第一次实测就踩了）。必须先 `rm -rf entry/build/default/intermediates/merge_profile`（或清 `.hvigor`）再构建。
+
+**效果（真机 HUAWEI MateBook Pro / HAD-W32）**：
+
+| | 压缩前 | 压缩后 |
+|---|---|---|
+| 未签名 HAP | 89,559,077 B | **48,964,907 B（-45%）** |
+| `libdbx_ohos.so` | 46,504,960 Stored | 21,598,316 Deflate（54%） |
+| `libdbx_agent_oracle.so` | 20,924,088 Stored | 5,236,536 Deflate（75%） |
+| 暖启动冒烟 | 12/12（328ms/1149ms） | 12/12（328ms/1149ms） |
+| 真冷（`bm clean -c`） | 12/12（1608ms/2846ms） | 12/12（1619ms/2496ms） |
+| Oracle `/api/connection/test` | `connection refused` | `connection refused` |
+| 驱动 restart / stop | `{"ok":true}` | `{"ok":true}` |
+
+`bm dump -n io.github.getz110.dbx` 里出现 `"isCompressNativeLibs": true`、`module.compressNativeLibs: true`。
+
+**结论**：平台会把压缩后的 native 库在安装时解压，**appspawn 的 NCP `dlopen` 路径不受影响**——这是原先担心的点，实测证伪。代价只有安装时一次解压（`hdc install` 实测 1.3s）与设备上多一份解压后的库。**因此以后每多内置一个 Go agent，HAP 只增加约 5.2MB，而不是 21MB。**
 
 ## 附录 A：本轮"失败/被证伪"路线的原始证据（摘要）
 

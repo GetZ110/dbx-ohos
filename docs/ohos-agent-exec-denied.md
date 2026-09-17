@@ -550,7 +550,7 @@ DBX_NATIVE: ncp probe: pid=47197 ready={"ready":true}
 1. **传输层接进 `AgentRuntimeClient`**：现在 `AgentRuntimeClient::spawn` 固定用 `spawn_agent_process()` 拿 `std::process::Child` + stdin/stdout 管道（`AgentLaunchSpec{program,args,working_dir}`）。需要把它抽象成 `{ ChildStdio, NcpStream }`：ncp 分支用 `UnixStream`（读写 + 关闭即结束），`kill()` 目前是 `Child::kill`，ncp 下要么用 pid + 信号、要么关 socket 让 agent 自己退。这是下一步主体工作，**每次迭代要重建 46MB `libdbx_ohos.so`（12–31 分钟）**。
 2. **其余 agent 铺开**：13 个 Go agent 的 `main()` 结构完全一致（`main.go` 里 `newRuntimeServer()` + `json.NewEncoder(os.Stdout)` 那套），转换是机械的：`main()` 改名为 `runStdioAgent()` + 加一个 `//go:build ohos_ncp` 的 `//export dbxAgentRun` 文件 + 共用 `ohos_ncp_shim.c`。清单：`argo-go cassandra-go etcd-go etcd2-go hive-go iotdb kingbase-go neo4j-go oracle-go rabbitmq rocketmq vastbase-go xugu zookeeper`（hive-go 一个产物覆盖 hive/kyuubi/impala）。另有 `duckdb`/`tdengine` 是 **Rust** agent（`Cargo.toml`），可以做成 cdylib 导出 `Main`，没有 Go 的 TLS/argv 问题。
 3. **JDBC/JRE：见 §15（真机测过，三个独立阻塞点 + JIT 权限门）。**
-4. **HAP 体积**：`libs/` 现在不压缩，oracle 一个 agent 就 +28MB（→21MB 压缩后）、HAP 已到 90MB；`compressNativeLibs` 是否影响 dlopen 待验证。
+4. **HAP 体积**：原先 `libs/` 不压缩，oracle 一个 agent 就 +28MB（stripped 后 20.9MB）、HAP 到 90MB。**2026-09-18 已解决**：给 `hvigor-config.json5` 加 `properties.ohos.pack.compressLevel = "standard"`（hvigor 据此把 `module.compressNativeLibs` 置真），HAP **89,559,077 → 48,964,907 B（-45%）**；`libdbx_ohos.so` 54%、`libdbx_agent_oracle.so` 75% 压缩率。**`compressNativeLibs` 不影响 dlopen**：真机上 NCP 子进程照常起、Oracle 连接与驱动 restart/stop 无变化，启动冒烟暖 12/12（328ms/1149ms）、冷 12/12（1619ms/2496ms），`bm dump` 里 `isCompressNativeLibs: true`。改法见 `AGENTS.md`「产物 / 构建 → HAP 内 native 库压缩」（注意改完要删 `intermediates/merge_profile` 强制重跑 `MergeProfile`，否则属性不生效）。
 5. 探测代码（`ncp_probe.rs` + `NcpProbe.ets`）是诊断用，默认关（`AppConstants.ENABLE_NCP_PROBE=false`）；传输层落地后删掉。
 
 ## 15. JDBC「进程内 JVM」可行性：真机测了，**当前不可行**（2026-09-15）
@@ -685,11 +685,11 @@ PermissionName: ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY
 实测数据：
 - `libdbx_agent_oracle.so` 28,360,272 B（`NEEDED` 只有 `libc.so`，无 TLS 重定位，导出 `Main`）；
 - `libdbx_ohos.so` 46,507,712 B（`NEEDED` 含 `libchild_process.so`）；release 构建 **45m42s**（比 §16 估的 12–31 分钟更久，首次全量 LTO）；
-- signed HAP 90,147,161 B（agent 压缩后 20.9MB）；
+- signed HAP 90,147,161 B（当时 `libs/` 未压缩；agent 只是 strip 到 20.9MB。开启 `compressNativeLibs` 后同一个包 48,964,907 B，见 §14.6 第 4 条）；
 - 子进程 `io.github.getz110.dbx:Native_libdbx_agent_oracle0`，uid 与应用相同；hilog 里 `CODE_SIGN [XpmIoctl] … Permission denied (ignore)` 是 BinSec 的非致命日志；
 - 失败后运行时自动 `status=stopped`，子进程退出，无残留。
 
-**未做**：① 其余 13 个 Go agent 铺开（有了通用探测后，加驱动只需重建 HAP、不用重建 Rust `.so`；每个 agent 压缩后 +20~28MB）；② 前端 dist 未重建，UI 里内置驱动会显示"已安装"但没有单独的"内置"标签（后端已上报 `bundled:true`，前端旧版本忽略该字段）；③ 完整 Oracle 实例的 `SELECT 1 FROM dual`（本机没有数据库）。
+**未做**：① 其余 13 个 Go agent 铺开（有了通用探测后，加驱动只需重建 HAP、不用重建 Rust `.so`；开启 native 库压缩后每个 agent 只 +约 5.2MB）；② 前端 dist 未重建，UI 里内置驱动会显示"已安装"但没有单独的"内置"标签（后端已上报 `bundled:true`，前端旧版本忽略该字段）；③ 完整 Oracle 实例的 `SELECT 1 FROM dual`（本机没有数据库）。
 
 **已补验**（解锁设备后，2026-09-17）：`startup_smoke.sh --mode warm` **12/12 PASS**（`modules loaded` 359ms / FCP 1216ms，`Local service ready` 121ms）；重启应用后重跑 Oracle 请求仍是 `dial tcp 127.0.0.1:1521: connect: connection refused`，子进程 `Native_libdbx_agent_oracle0` 稳定复现。**启动与连接链路都无回归。**
 

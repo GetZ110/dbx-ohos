@@ -62,7 +62,7 @@ appspawn `dlopen` 并调用其导出入口。**不构建这一步，HAP 里的 O
 |---|---|---|
 | 进程内 Rust 驱动 | ✅ | MySQL / PostgreSQL / SQLite / MongoDB / Redis / ClickHouse 等，不 fork 子进程，与桌面一致 |
 | **Oracle** | ✅ **已内置** | Go agent 编成 `libdbx_agent_oracle.so`，走 native child process；无需下载驱动、无需签名/HNP |
-| 其他 agent 类驱动 | ⚠️ 未内置 | Cassandra / Neo4j / Hive / etcd / 达梦 … 机制相同，但每个都需编一份 `.so` 进包（每个约 +21MB 压缩后）。配方见 `docs/ohos-oracle-driver-report.md` §10 |
+| 其他 agent 类驱动 | ⚠️ 未内置 | Cassandra / Neo4j / Hive / etcd / 达梦 … 机制相同，但每个都需编一份 `.so` 进包（HAP 开启 native 库压缩后每个约 **+5.2MB**）。配方见 `docs/ohos-oracle-driver-report.md` §10 |
 | JDBC / JRE 类驱动 | ❌ 不可行 | 需要 JVM：沙箱 `.so` 无法 `dlopen`、官方 JRE 是 glibc（OHOS 只有 musl）。详见 `docs/ohos-agent-exec-denied.md` §15 |
 
 已内置的驱动在「驱动管理」里显示为**已安装**且不可卸载（随应用分发）；未内置的驱动
@@ -89,10 +89,11 @@ appspawn `dlopen` 并调用其导出入口。**不构建这一步，HAP 里的 O
 - [x] 加载页防白闪：首次内容绘制（`onFirstContentfulPaint`）后再隐藏加载层
 - [x] 系统任务栏/Dock 颜色结论：窗口外的系统任务栏/Dock 属系统级外观，应用侧无法控制（`setColorMode` / `setWindowSystemBarProperties` 只能影响应用窗口自身的状态栏与导航栏区域）。已确认为平台行为，不再作为待办
 - [x] **Oracle 驱动支持（native child process）**：agent 编成 `libdbx_agent_oracle.so` 随 HAP 分发，由 appspawn `dlopen` 运行，复用原有 stdin/stdout JSON-RPC；不需要执行位、不需要华为签名/HNP。驱动列表把它显示为「已安装（内置）」且不可卸载，无需下载驱动即可连接。详见 `docs/ohos-oracle-driver-report.md`
+- [x] **HAP 内 native 库压缩**：`hvigor-config.json5` 里 `properties.ohos.pack.compressLevel = "standard"`，HAP 从 **89.5MB 降到 49.0MB**（`libdbx_ohos.so` 54%、`libdbx_agent_oracle.so` 75% 压缩率）；实测启动与驱动运行无差异，代价是安装时多一次解压
 
 ## 待办
 
-- [ ] P1：按需内置更多 agent 类驱动（Cassandra / Neo4j / Hive / etcd …）。机制已通，配方见 `docs/ohos-oracle-driver-report.md` §10；注意每个驱动约 +21MB（压缩后），量大时需考虑 feature HAP / 按需下发
+- [ ] P1：按需内置更多 agent 类驱动（Cassandra / Neo4j / Hive / etcd …）。机制已通，配方见 `docs/ohos-oracle-driver-report.md` §10；HAP 开启 native 库压缩后每个驱动约 +5.2MB，量大时仍需考虑 feature HAP / 按需下发
 - [ ] P2：PC/平板 UX 优化（触摸适配、原生侧边栏、按窗口类型布局）
 - [ ] P2：查询表格 **Canvas 渲染模式流畅度优化**（当前 Canvas 自绘网格为每帧全量重绘：可见格 × `fillText` + `measureText`，且背板 = `dpr² × uiScale`，大数据量滚动在 ArkWeb 上一帧画不完导致丢帧。计划改增量绘制：行块纹理离屏缓存 + 平移贴图 + DPR 降级；优化落地前，UI 已支持「视图选项 → 渲染模式切 DOM」作为流畅兜底）
 - [ ] P3：沙箱数据备份/导出/导入、连接加密确认、云同步验证
