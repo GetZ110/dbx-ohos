@@ -18,8 +18,16 @@ Go 的 c-shared 库在 OHOS 上由 appspawn 用 dlopen 加载，会在 musl 上�
    `argv=["dbx-agent",NULL] envp=[NULL] auxv=[AT_NULL]`；Go 的 sysargs 发现
    auxv 为空会自动回退读 /proc/self/auxv，因此真实 auxv（页大小/HWCAP）不丢。
 
+3. **NCP 入口注入（--inject-driver）**：`//go:build ohos_ncp` 的 `ohos_ncp.go`
+   （导出 `dbxAgentRun`）与 `ohos_ncp_shim.c`（导出系统要求的 `Main`）是**所有
+   driver 共用**的，没必要在每个 driver 目录里各放一份。用 `-overlay` 把
+   `harmony/tools/agent_ncp/` 下的规范副本"虚拟"注入 driver 包目录即可：
+   overlay 支持把**磁盘上不存在的路径**映射到真实文件（等价于新增文件），
+   所以既不污染上游源码树，`git status` 也保持干净。
+   driver 目录里若已有同名文件（oracle-go 的历史提交），以磁盘上的为准。
+
 用法：
-    python3 harmony/tools/go_ohos_overlay.py [--out DIR]
+    python3 harmony/tools/go_ohos_overlay.py [--out DIR] [--inject-driver DIR]
 输出：
     DIR/asm_arm64.patched.s, DIR/tls_arm64.patched.s, DIR/overlay.json
 （DIR 默认 .tmp/go-ohos-overlay）
@@ -145,10 +153,19 @@ def patch(path: pathlib.Path, replacements: list[tuple[str, str]]) -> str:
     return text
 
 
+# NCP 入口文件的规范副本（所有 driver 共用，由 --inject-driver 注入）
+NCP_FILES = ("ohos_ncp.go", "ohos_ncp_shim.c")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", default=None, help="输出目录（默认 <repo>/.tmp/go-ohos-overlay）")
     parser.add_argument("--goroot", default=None, help="GOROOT（默认取 go env GOROOT）")
+    parser.add_argument(
+        "--inject-driver",
+        default=None,
+        help="把 harmony/tools/agent_ncp/ 下的 NCP 入口文件以 overlay 方式注入该 driver 目录",
+    )
     args = parser.parse_args()
 
     repo = pathlib.Path(__file__).resolve().parents[2]
@@ -187,18 +204,29 @@ def main() -> int:
     )
 
     overlay = out / "overlay.json"
-    overlay.write_text(
-        json.dumps(
-            {
-                "Replace": {
-                    str(tls_src): str(tls_out),
-                    str(asm_src): str(asm_out),
-                }
-            },
-            indent=2,
-        )
-        + "\n"
-    )
+    replace = {
+        str(tls_src): str(tls_out),
+        str(asm_src): str(asm_out),
+    }
+
+    if args.inject_driver:
+        driver_dir = pathlib.Path(args.inject_driver).resolve()
+        if not driver_dir.is_dir():
+            raise SystemExit(f"找不到 driver 目录：{driver_dir}")
+        ncp_dir = repo / "harmony" / "tools" / "agent_ncp"
+        for name in NCP_FILES:
+            source = ncp_dir / name
+            if not source.is_file():
+                raise SystemExit(f"找不到 NCP 入口文件：{source}")
+            target = driver_dir / name
+            if target.exists():
+                # oracle-go 这类历史提交里已经放了实体文件：以磁盘上的为准
+                print(f"inject: {name} 已存在于 driver 目录，跳过")
+                continue
+            replace[str(target)] = str(source)
+            print(f"inject: {target} -> {source}")
+
+    overlay.write_text(json.dumps({"Replace": replace}, indent=2) + "\n")
 
     print(f"go={go_env('GOVERSION')} goroot={goroot}")
     print(f"overlay: {overlay}")

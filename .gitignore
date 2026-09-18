@@ -25,3 +25,11 @@ release/
 # Local AI/agent tooling state (machine-specific, not part of the project)
 .arts/
 .workbuddy/
+
+# 内置 agent 的 native 产物（约 290MB）：只提交构建脚本，不入 git。
+# 重建：harmony/tools/build_all_agents.sh  →  harmony/tools/verify_agent_libs.sh
+# 说明：libdbx_ohos.so 与 libdbx_agent_oracle.so 是历史提交、继续跟踪
+#（已在 index 里的文件不受 gitignore 影响，下面的 ! 只是把意图写明确）。
+harmony/dbxohos/entry/libs/arm64-v8a/libdbx_agent_*.so
+harmony/dbxohos/entry/libs/arm64-v8a/libc++_shared.so
+!harmony/dbxohos/entry/libs/arm64-v8a/libdbx_agent_oracle.so
