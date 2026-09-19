@@ -70,6 +70,9 @@ dbx-ohos/                     # 父仓库，只有 main 一个分支，直接在
 | `harmony/dbxohos/entry/src/main/ets/services/FolderManagerWebScript.ets` | 注入脚本：工具栏「授权目录管理」入口（插在「驱动管理」和「更多」之间，class 采样同级按钮）+ 管理面板：`Documents/DBX` 的**实时授权状态**（权限 + 可写性，缺权限时给「去授权」）、已授权目录两步「撤销」、新增授权目录。**刻意不列目录里的库文件** |
 | `harmony/dbxohos/entry/src/main/ets/services/WebPrefsBridge.ets` | 原 `dbxNativePrefs` 桥，**目前未注册、实际不生效**（见「ArkWeb / 启动链路」的既有 bug） |
 | `harmony/tools/inject_modulepreload.py` | 给构建产物 `index.html` 注入启动闭包 `modulepreload`（**替换 dist 后必须重跑**） |
+| `harmony/tools/ohos_cdp.sh` | **用 CDP 驱动页面**：找应用的 devtools socket → `hdc fport` → 跑 `cdp_eval.js` → 用完撤转发。`--eval` / `--file` / `--list` / `--up`；需 `ENABLE_WEB_DEBUG=true` 的包 |
+| `harmony/tools/cdp_eval.js` | CDP 求值器（`Runtime.evaluate` + `awaitPromise` + `userGesture`），由 `ohos_cdp.sh` 调用；也可直接指定端口用 |
+| `harmony/tools/cdp_probes/` | 现成探针：`connection_dialog.js`（打开连接对话框并 dump 注入的文件路径行）、`folder_manager.js`（打开工具栏面板并 dump 各行的权限状态与按钮） |
 | `harmony/tools/startup_smoke.sh` | 启动冒烟：`force-stop → hilog -r → aa start → 抓 25s → 12 条断言`。`--mode warm\|cold\|auto`、`--log`（离线重跑断言，不需设备）、`--serial`；退出码 0/1/2 |
 
 ## 构建命令
@@ -535,24 +538,24 @@ cp target/release/libdbx_ohos.so ../../harmony/dbxohos/entry/libs/arm64-v8a/libd
 
 ### 用 CDP 直接驱动页面（验证注入脚本，2026-09-19 打通）
 
-注入脚本（文件路径行、uiScale、表头）的验证过去靠"临时塞一段 self-test 再重建+人工点"或靠人肉点，都慢。现在可以走 ArkWeb 的 CDP：
+注入脚本（文件路径行、uiScale、表头、目录管理面板）的验证过去靠"临时塞一段 self-test 再重建+人工点"，慢且不可复现。现在走 ArkWeb 的 CDP，**已封装成脚本**：
 
-1. 临时把 `common/Constants.ets` 的 `ENABLE_WEB_DEBUG` 改成 `true`，构建装机（**验完改回 `false`**：开着装出来的包，任何能连 hdc 的人都能注入 JS 读数据库凭据，别随 release 发出去）；
-2. 找**本应用**的 devtools socket（设备上可能同时有别的 webview，比如浏览器）：
+```bash
+# 1) 临时把 common/Constants.ets 的 ENABLE_WEB_DEBUG 改成 true，构建+装机（验完必须改回 false）
+# 2) 驱动页面（脚本自己找 socket、开转发、跑完撤转发）
+./harmony/tools/ohos_cdp.sh --list                       # 设备上有哪些 webview（认 127.0.0.1:4224）
+./harmony/tools/ohos_cdp.sh --eval "document.title"
+./harmony/tools/ohos_cdp.sh --file harmony/tools/cdp_probes/folder_manager.js
+./harmony/tools/ohos_cdp.sh --file .tmp/my_probe.js      # 一次性探针放 .tmp
+```
 
-   ```bash
-   PID=$(hdc shell pidof io.github.getz110.dbx | tr -d '\r')
-   hdc shell "cat /proc/net/unix" | grep -o "webview_devtools_remote_[0-9]*" | sort -u
-   hdc fport tcp:9500 localabstract:webview_devtools_remote_$PID
-   curl -s http://127.0.0.1:9500/json/list | grep -E '"url"|"title"'   # 认 127.0.0.1:4224
-   ```
+**为什么必须有这个脚本**：`setWebDebuggingAccess(true)` 开的 devtools socket 名字是 `webview_devtools_remote_<pid>`，而那个数字**不一定等于应用 pid**（ArkWeb 可能用渲染进程号），设备上还同时有别的 webview（比如浏览器自己的）；所以要枚举 `/proc/net/unix` 里的所有 `webview_devtools_remote_*`，逐个转发并用 `/json/list` 里有没有 `127.0.0.1:4224` 来认（`ohos_cdp.sh` 就是干这个的）。另外装机重启后 socket 号会变，**每次验之前都要重跑脚本**，别缓存端口。`hdc fport rm` 的正确写法是 `hdc fport rm tcp:<本地端口> <远端描述>`，只给本地端口会报 `ruler is not exist`。
 
-   注意 socket 名里的数字**不一定等于应用 pid**（ArkWeb 可能用渲染进程号），所以不要写死；`hdc fport` 报 `TCP Port listen failed` 就是本地端口被上一次转发占着，先 `hdc fport rm tcp:<port>`（正确写法是 `hdc fport rm tcp:<本地端口> <远端描述>`，只给本地端口会报 `ruler is not exist`）。`.tmp/cdp-up.sh` 是这套探测的封装：遍历所有 devtools socket，返回第一个页面 URL 是 `127.0.0.1:4224` 的本地端口 —— 装机重启后 socket 会变，**每次验之前都重跑它**。
-3. `.tmp/cdp.js`（本会话写的驱动，未入库）：`node .tmp/cdp.js --port 9500 --url 4224 --file .tmp/probe.js` —— 内部用 Node 内置 `WebSocket` 发 `Runtime.evaluate`（`awaitPromise` + `userGesture`），脚本里可以 `await sleep()`、点按钮、读 DOM，把结果 `JSON.stringify` 回来。
-
-**已验证可用的手法**：把 `window.dbxNativeWindow` 换成页面内的假桥（`Object.defineProperty` 可覆盖），再 `click()` 注入按钮 → 就能在**完全不弹系统窗口**的前提下，把"选到未授权目录"/"授权成功"/"撤销"等 native 回调分支全跑一遍。需要真系统弹窗的步骤（真的选文件/选文件夹）仍然只能人工点。
-
-**⚠️ 假桥一定要在 `finally` 里还原（2026-09-19 被坑过）**：脚本中途抛异常会把假桥留在页面里，此后所有"原生调用"都打到假桥上，看起来就像原生方法坏了（当时 `revokeGrantedFolder` 对任意参数都回 `'ok'`、`grantedFolders()` 回空串，我差点去改一个根本没坏的桥）。排查口诀：**先让页面重载（重装/重启应用）再复测**——如果重载后行为正常，那就是上一次探测留下的假桥，不是原生 bug。
+**已验证可用的手法**：
+- `--file` 探针里可以 `await sleep()`、`click()` 注入按钮、读 DOM，最后 `return JSON.stringify(...)`；求值带 `userGesture`，所以合成点击算用户手势。开对话框的固定序列（点「新建连接」→ 在类型搜索框里填 `sqlite` → 点 `button.connection-db-picker-option`）见 `cdp_probes/connection_dialog.js`。
+- **把 `window.dbxNativeWindow` 换成页面内的假桥**（`Object.defineProperty` 可覆盖），再 `click()` 注入按钮 → 就能在**完全不弹系统窗口**的前提下跑 native 回调分支（未授权目录、授权成功、撤销、权限被拒……都这么验的）。需要真系统弹窗的步骤（真的选文件/选文件夹）仍然只能人工点。
+- **⚠️ 假桥一定要在 `finally` 里还原（2026-09-19 被坑过）**：脚本中途抛异常会把假桥留在页面里，此后所有"原生调用"都打到假桥上，看起来就像原生方法坏了（当时 `revokeGrantedFolder` 对任意参数都回 `'ok'`、`grantedFolders()` 回空串，差点去改一个根本没坏的桥）。排查口诀：**先让页面重载（重装/重启应用）再复测**——重载后行为正常，那就是上一次探测留下的假桥，不是原生 bug。
+- **`ENABLE_WEB_DEBUG` 绝不能随 release 发出去**：开着的话，任何能通过 hdc 连到设备的人都能往这个页面注入 JS，而这个页面持有数据库凭据。
 
 ### 测试设备连接顺序（约定）
 
