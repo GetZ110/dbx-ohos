@@ -75,6 +75,7 @@ dbx-ohos/                     # 父仓库，只有 main 一个分支，直接在
 | `harmony/tools/cdp_eval.js` | CDP 求值器（`Runtime.evaluate` + `awaitPromise` + `userGesture`），由 `ohos_cdp.sh` 调用；也可直接指定端口用 |
 | `harmony/tools/cdp_probes/` | 现成探针：`connection_dialog.js`（打开连接对话框并 dump 注入的文件路径行）、`folder_manager.js`（打开工具栏面板并 dump 各行的权限状态与按钮） |
 | `harmony/tools/startup_smoke.sh` | 启动冒烟：`force-stop → hilog -r → aa start → 抓 25s → 12 条断言`。`--mode warm\|cold\|auto`、`--log`（离线重跑断言，不需设备）、`--serial`；退出码 0/1/2 |
+| `docs/ohos-jit-permission.md` | **JIT 受限 ACL 全流程**：AGC 申请入口与文案、试用调试 Profile 填法、`.p7b` 校验脚本、**2026-09-19 真机 JIT 探针实测（`mmap_rwx=OK` / `exec_result=42`）**、`fport` 自环坑、换正式 profile 的三处联动清单 |
 
 ## 构建命令
 
@@ -213,7 +214,7 @@ node /storage/Users/currentUser/deveco_tools/hvigor/bin/hvigorw.js \
   - ✅ **oracle 端到端已跑通**（真机）：`libdbx_agent_oracle.so`（Go c-shared，28MB）在子进程里回 `{"ready":true}` + `handshake`；ArkTS 与 Rust 两侧都验证过（Rust：`UnixStream::pair()` + `#[link(name="child_process")] OH_Ability_StartNativeChildProcess`）。
   - ✅ **2026-09-17 生产化完成**：`crates/dbx-core/src/db/agent_ncp.rs` + `agent_driver.rs` 的 `AgentProcess`/`SpawnedAgent`/`spawn_agent_io()` + `agent_manager.rs` 的 `ohos_bundled_agent_launch()`（`"oracle" => libdbx_agent_oracle.so:Main`）。同一个 `/api/connection/test` 从 `Permission denied (os error 13)` 变成 **`dial tcp 127.0.0.1:1521: connect: connection refused`**（= 子进程起来、handshake 通过、go-ora 真的拨号）。报告：`docs/ohos-oracle-driver-report.md`；细节：`docs/ohos-agent-exec-denied.md` §17。注意 release 重建实测 **45m42s**，HAP 69→**90MB**（未压缩 native 库；开启压缩后 49MB，见「产物 / 构建 → HAP 内 native 库压缩」）。
   - **Go c-shared 在 musl 上有两处硬伤，必须打 Go 运行时补丁**（否则连 dlopen 都过不去）：① IE TLS（`runtime.load_g/save_g` 访问 `runtime.tls_g`，[go#54805](https://github.com/golang/go/issues/54805) 至今 open；`-fno-emulated-tls`/TLSDESC 也不行——OHOS musl 不支持 TLSDESC，这正是 OHOS clang 默认 `-femulated-tls` 的原因）→ 改调 C 侧 `static __thread`；② `_rt0_arm64_lib` 拿不到 argc/argv（musl 调 init_array 不传）→ 改用 asm 自带骨架。落地：`harmony/tools/go_ohos_overlay.py`（**`-overlay` 对 `.s` 生效**，不碰 GOROOT）+ `build_agent_cshared.sh`。
-  - **E = JDBC 进程内 JVM：已评估，当前不可行**（三重卡死）：① 沙箱里的 .so `dlopen` 被拒（EINVAL），**只有 HAP `libs/` 能 dlopen**；② JIT 默认被禁（exec 内存 `EINVAL`），权限名与申请路径见「关键约束/坑 → **JIT / 可执行内存权限**」；③ dbx 下载的 JRE 是 **glibc** 的（`libjvm.so` 依赖 `libc.so.6`），OHOS 只有 musl。
+  - **E = JDBC 进程内 JVM：已评估，当前不可行**（三重卡死）：① 沙箱里的 .so `dlopen` 被拒（EINVAL），**只有 HAP `libs/` 能 dlopen**；② ~~JIT 默认被禁（exec 内存 `EINVAL`）~~ **2026-09-19 已解除**——受限 ACL 拿到后真机 `mmap_rwx=OK` / 写入机器码并执行 `exec_result=42`，全流程与换正式 profile 的清单见 `docs/ohos-jit-permission.md`；③ dbx 下载的 JRE 是 **glibc** 的（`libjvm.so` 依赖 `libc.so.6`），OHOS 只有 musl。→ **剩 ①③ 两条**。
 - **内置驱动识别已通用化（2026-09-17）**：`ohos_bundled_agent_library()` = 已知列表 + 探测 HAP `libs/` 目录（**首选 `dladdr()`** 取本库真实加载路径，`/proc/self/maps` 与沙箱常量兜底；`OnceLock` 缓存）后的 `libdbx_agent_<key>.so`；`is_driver_installed()` / `build_agent_list()` 把内置驱动报成 `installed=true, bundled=true, update_available=false`，`uninstall` 返回"随应用分发、不能单独卸载"。**收益：以后加驱动只需把 `.so` 放进 `entry/libs/arm64-v8a/` 重建 HAP（约 10s），不用再重建 46MB 的 Rust `.so`** —— 已用 14 字节假 `libdbx_agent_cassandra.so` 验证（`dladdr` 版又复验一次，报告 §6.6）。前端 dist 未重建，所以 UI 只显示"已安装"、没有"内置"标签。
 - ✅ **全部 16 个原生 agent 已内置（2026-09-18）**：14 个 Go（`oracle kingbase vastbase hive argo neo4j cassandra iotdb xugu etcd etcd2 zookeeper rocketmq rabbitmq`，其中 hive 一个产物覆盖 hive/kyuubi/impala）+ 2 个 Rust（`tdengine` 走 agent 路径、`duckdb` 走 sidecar 路径）。构建工具链：
   - `harmony/tools/build_all_agents.sh`（`--go`/`--rust`/`--list`，`JOBS=n`）批量构建，产物统一落 `entry/libs/arm64-v8a/libdbx_agent_<key>.so`；
@@ -348,7 +349,7 @@ node /storage/Users/currentUser/deveco_tools/hvigor/bin/hvigorw.js \
   1. 无代码签名 → `execve` 返回 `EACCES`（hilog：`code_protect/BSS … node: CheckSigned, ret: 1017604106`，伴随 `FillElfModuleJson: empty module.json buf`）；
   2. 即使签名（自签名或**用应用自己的证书签**都一样），**应用域仍返回 `EPERM`** —— 拒绝点是 BinSec `LoadBinCtrlAndManage`「parent process cannot load this binary」（`binaryType: 5, isCustomSandbox: 0, isAllowExt: 0`），**与签名身份无关**（A/B/C 对照见 `docs/ohos-agent-exec-denied.md` §18）。
 - **能跑原生代码的路**：**native child process**（本仓库已用，见 P0'）是唯一不需要华为侧授权的；**HNP** 是平台正路但要签名链路（本机 hvigor 插件无 hnp 逻辑、SDK 无 `hnpcli`，且证书缺二进制证书扩展）。`ohos.permission.CUSTOM_SANDBOX` **已试过、走不通**（见 P0' 与 §18.1）；`DISABLE_CODE_MEMORY_PROTECTION` 只关 XPM，与二进制管控无关。
-- 所以：**agent 类驱动必须随 HAP 分发（NCP）**；JDBC/JRE 仍不可行（沙箱 `.so` 不能 dlopen + glibc JRE）。详见 `docs/ohos-agent-exec-denied.md`。
+- 所以：**agent 类驱动必须随 HAP 分发（NCP）**；JDBC/JRE 仍不可行（沙箱 `.so` 不能 dlopen + glibc JRE）。详见 `docs/ohos-agent-exec-denied.md`。**JIT / 可执行内存这条已于 2026-09-19 通过受限 ACL 解决**（`docs/ohos-jit-permission.md`），JDBC 方案现在只剩"沙箱 dlopen + musl JRE"两条。
 
 ### JIT / 可执行内存权限（2026-09-16 查证官方文档 + 真机实测）
 
@@ -379,6 +380,14 @@ node /storage/Users/currentUser/deveco_tools/hvigor/bin/hvigorw.js \
 4. 部分 ACL 权限**只对受邀应用开放**，非受邀应用在 AGC 上申请不到。
 
 **对本项目的意义**：JIT 权限只解决"能不能造可执行内存"；它**不能**解决 §15 的另外两条（沙箱里的 .so 一律 `dlopen` 不了、dbx 下载的 JRE 是 glibc 而 OHOS 只有 musl），所以 JDBC 走进程内 JVM 依然不可行。将来若要做 JIT 类功能（JVM / 自研引擎），按上面路径 1 走即可，不必等功能开发完再申请。
+
+**✅ 2026-09-19 实证：ACL 已拿到，JIT 真机跑通**（详见 `docs/ohos-jit-permission.md`）：
+
+- 路径是 **AGC「项目设置 → ACL权限」页签 → 申请 `ALLOW_WRITABLE_CODE_MEMORY` → 用弹窗创建「试用调试 Profile」（5 天）**——不是「证书」页，证书只是签名链第一步；
+- 试用 profile 解析结果：`allowed-acls = ["ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY"]`、`bundle-name`/`developer-id`(30086000681415814)/证书指纹都与本机 `.p12` 一致 → 可 `install -r` 覆盖、数据保留；
+- **探针实测（NCP 子进程内）**：`mmap_rwx=OK`、`mprotect_rwx=OK`、`mprotect_rx=OK` 且 `exec_result=42`（真的写入 `mov w0,#42; ret` 并执行成功）→ **② 号卡点解除**；
+- 仍未变：`sandbox_dlopen=FAIL`（①）、`exec_mmap_bundle errno=13`（文件映射不能当代码页）、JRE 仍是 glibc（③）；
+- **两个新坑**：① 本机 host==device，`hdc fport tcp:4224 tcp:4224` 会自环（转发器占住端口、curl 永久挂起，`/proc/net/tcp` 堆上千 TIME_WAIT）——**直接 `curl http://127.0.0.1:4224`，别做 fport**；② 任意原生探针只要命名成 `libdbx_agent_<key>.so` 丢进 `entry/libs/arm64-v8a/`，就能用 `POST /api/agents/runtime/restart {"runtimeId":"agent:<key>"}` 以应用身份拉起（`restart_driver_runtime` 不校验 key），**不用重建 46MB 的 `libdbx_ohos.so`**。
 
 ### Rust 服务
 
