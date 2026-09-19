@@ -16,6 +16,13 @@
         "name": "ohos.permission.INTERNET"
       },
       {
+        // system_grant + normal: declared here is enough (no ACL in the
+        // signing profile). Needed to persist a picked folder's URI grant so
+        // it survives restarts. Removal candidate if install starts failing
+        // with 9568289.
+        "name": "ohos.permission.FILE_ACCESS_PERSIST"
+      },
+      {
         "name": "ohos.permission.READ_WRITE_DOCUMENTS_DIRECTORY",
         "reason": "$string:reason_read_write_documents_directory",
         "usedScene": {

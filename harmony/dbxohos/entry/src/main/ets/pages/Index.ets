@@ -2,10 +2,12 @@ import { webview } from '@kit.ArkWeb';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { common } from '@kit.AbilityKit';
 import { AppConstants } from '../common/Constants';
-import { WebPrefsBridge } from '../services/WebPrefsBridge';
 import { ThemePrefs } from '../services/ThemePrefs';
 import { WindowBridge } from '../services/WindowBridge';
 import { CodeCacheWarmer } from '../services/CodeCacheWarmer';
+import { ShellBridge } from '../services/ShellBridge';
+import { FILE_PICKER_INJECTION_SCRIPT } from '../services/FilePickerWebScript';
+import { FOLDER_MANAGER_INJECTION_SCRIPT } from '../services/FolderManagerWebScript';
 
 const DOMAIN = 0xDB2;
 const TAG = 'DBX_PAGE';
@@ -36,8 +38,7 @@ struct Index {
   @StorageProp('dbx_service_ready') serviceReady: boolean = false;
   @StorageProp('dbx_reload_token') @Watch('onReloadTokenChanged') reloadToken: number = 0;
   private controller: webview.WebviewController = new webview.WebviewController();
-  private prefsBridge: WebPrefsBridge = new WebPrefsBridge();
-  private windowBridge: WindowBridge = new WindowBridge();
+  private shellBridge: ShellBridge = new ShellBridge();
   private loadingTimer: number = -1;
   private hideLoadingTimer: number = -1;
   private firstContentfulPaintReceived: boolean = false;
@@ -419,6 +420,13 @@ private windowInjectionScript: string =
       webview.WebviewController.setWebDebuggingAccess(true);
     }
     ThemePrefs.init(getContext(this) as common.UIAbilityContext);
+    // The shell bridge needs the controller (to push picker results back into
+    // the page) and the ability context (to open the system picker and copy
+    // files).
+    this.shellBridge.attach(this.controller, getContext(this) as common.UIAbilityContext);
+    // Re-arm folder grants persisted by the folder picker: HarmonyOS remembers
+    // them across restarts but does not activate them by itself.
+    this.shellBridge.activateGrantedFolders();
     const savedTheme: string = ThemePrefs.getPref('dbx-theme');
     this.refreshLoadingTheme();
     this.themeWatchTimer = setInterval(() => {
@@ -426,6 +434,12 @@ private windowInjectionScript: string =
     }, 500);
     hilog.info(DOMAIN, TAG, 'Index about to appear, webSrc=%{public}s, savedTheme=%{public}s',
       this.webSrc, savedTheme.length > 0 ? savedTheme : '(unset)');
+  }
+
+  onPageShow(): void {
+    // Folder grants are per-session: HarmonyOS remembers them but does not
+    // re-arm them, so re-activate whenever the page returns to the foreground.
+    this.shellBridge.activateGrantedFolders();
   }
 
   private refreshLoadingTheme(): void {
@@ -554,16 +568,16 @@ private windowInjectionScript: string =
         .javaScriptAccess(true)
         .domStorageAccess(true)
         .databaseAccess(true)
+        // ArkWeb keeps only the LAST javaScriptProxy registration (measured on
+        // device 2026-09-19: a third registration silently removed
+        // `dbxNativeWindow`, which killed the toolbar reserve), so every
+        // page-facing native method lives on this single object. The proxy name
+        // is kept because the built frontend bundle and the injected shell
+        // scripts already call `globalThis.dbxNativeWindow`.
         .javaScriptProxy({
-          object: this.prefsBridge,
-          name: 'dbxNativePrefs',
-          methodList: ['getPref', 'savePref'],
-          controller: this.controller
-        })
-        .javaScriptProxy({
-          object: this.windowBridge,
+          object: this.shellBridge,
           name: 'dbxNativeWindow',
-          methodList: ['minimize', 'toggleMaximize', 'close', 'startMove', 'isMaximized', 'getBottomNavHeight', 'getTitleButtonReserveWidth', 'setDarkMode', 'setThemeModeFromWeb', 'setAppearanceFromWeb', 'syncSystemAppearance', 'getEffectiveAppearance', 'openExternal'],
+          methodList: ['minimize', 'toggleMaximize', 'close', 'startMove', 'isMaximized', 'getBottomNavHeight', 'getTitleButtonReserveWidth', 'setDarkMode', 'setThemeModeFromWeb', 'setAppearanceFromWeb', 'syncSystemAppearance', 'getEffectiveAppearance', 'openExternal', 'pickDatabaseFile', 'pickDatabaseFolder', 'grantedFolders', 'defaultFolder', 'documentsStatus', 'requestDocumentsPermission', 'revokeGrantedFolder'],
           controller: this.controller
         })
         .javaScriptOnDocumentStart([{
@@ -587,6 +601,14 @@ private windowInjectionScript: string =
         }, {
           script: this.uiScaleBridgeScript,
           scriptRules: ['*']
+        }, {
+          script: FILE_PICKER_INJECTION_SCRIPT,
+          scriptRules: ['*']
+        },
+        {
+          // Injects the toolbar entry + the authorized-folders manager panel.
+          script: FOLDER_MANAGER_INJECTION_SCRIPT,
+          scriptRules: ['*']
         }])
         .onlineImageAccess(true)
         .fileAccess(true)
@@ -602,6 +624,7 @@ private windowInjectionScript: string =
         })
         .onPageEnd(() => {
           this.errorText = '';
+
           this.clearLoadingTimeout();
           // Fallback hide if onFirstContentfulPaint is not delivered.
           this.clearHideLoadingTimer();

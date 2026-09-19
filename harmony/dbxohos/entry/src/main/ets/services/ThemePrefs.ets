@@ -42,10 +42,33 @@ export class ThemePrefs {
     }
   }
 
+  /**
+   * True when `value` can live in the preferences XML file.
+   *
+   * The store is an XML document, so a raw control character (0x00-0x1F other
+   * than tab/newline/CR) makes the file unparsable. The framework then
+   * quarantines it as `dbx_theme_prefs.broken` and **resets every key in the
+   * store** — measured 2026-09-19 after a value containing \u0001 wiped the
+   * theme prefs. Reject such values loudly instead of corrupting the store.
+   */
+  private static isStorable(value: string): boolean {
+    for (let i: number = 0; i < value.length; i++) {
+      const code: number = value.charCodeAt(i);
+      if (code < 0x20 && code !== 0x09 && code !== 0x0A && code !== 0x0D) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   static savePref(key: string, value: string): void {
     try {
       const store = ThemePrefs.store;
       if (!store) {
+        return;
+      }
+      if (!ThemePrefs.isStorable(value)) {
+        hilog.error(DOMAIN, TAG, 'refusing to store %{public}s: value has XML-invalid control characters', key);
         return;
       }
       store.putSync(key, value);

@@ -63,8 +63,12 @@ dbx-ohos/                     # 父仓库，只有 main 一个分支，直接在
 | `harmony/dbxohos/entry/src/main/ets/services/ServerHealthChecker.ets` | `/api/health` 轮询（短间隔起步退避） |
 | `harmony/dbxohos/entry/src/main/ets/services/CodeCacheWarmer.ets` | `precompileJavaScript` 参考实现，**默认关闭**（见附录 C） |
 | `harmony/dbxohos/entry/src/main/ets/services/ThemePrefs.ets` | 原生 Preferences（主题 + dist 指纹） |
-| `harmony/dbxohos/entry/src/main/ets/services/WindowBridge.ets` | 窗口控制 + 系统外观桥（`dbxNativeWindow`）：minimize/maximize/close/drag/外观同步 |
-| `harmony/dbxohos/entry/src/main/ets/services/WebPrefsBridge.ets` | 暴露给 Web 的 `dbxNativePrefs` JS 桥 |
+| `harmony/dbxohos/entry/src/main/ets/services/WindowBridge.ets` | 窗口控制 + 系统外观（minimize/maximize/close/drag/外观同步）；经 `ShellBridge` 暴露 |
+| `harmony/dbxohos/entry/src/main/ets/services/ShellBridge.ets` | **唯一的 `javaScriptProxy` 对象**（页面里的 `window.dbxNativeWindow`）：聚合 WindowBridge + FilePickerBridge；只能有一个注册，见「ArkWeb / 启动链路」 |
+| `harmony/dbxohos/entry/src/main/ets/services/FilePickerBridge.ets` | 本地库文件选择/新建 + 文件夹授权（`persistPermission` + 启动 `activatePermission`）+ URI→路径 + 允许位置校验 + 目录管理（`pickDatabaseFile` / `pickDatabaseFolder` / `grantedFolders` / `defaultFolder` / `documentsStatus` / `requestDocumentsPermission` / `revokeGrantedFolder`） |
+| `harmony/dbxohos/entry/src/main/ets/services/FilePickerWebScript.ets` | 注入脚本：把连接对话框「文件路径」行变只读展示框 + 选择文件/新建数据库/内存库/**授权文件夹**四个按钮 + 常驻位置提示；暴露 `window.__dbxFilePickerRefreshHint()` 供管理面板刷新提示 |
+| `harmony/dbxohos/entry/src/main/ets/services/FolderManagerWebScript.ets` | 注入脚本：工具栏「授权目录管理」入口（插在「驱动管理」和「更多」之间，class 采样同级按钮）+ 管理面板：`Documents/DBX` 的**实时授权状态**（权限 + 可写性，缺权限时给「去授权」）、已授权目录两步「撤销」、新增授权目录。**刻意不列目录里的库文件** |
+| `harmony/dbxohos/entry/src/main/ets/services/WebPrefsBridge.ets` | 原 `dbxNativePrefs` 桥，**目前未注册、实际不生效**（见「ArkWeb / 启动链路」的既有 bug） |
 | `harmony/tools/inject_modulepreload.py` | 给构建产物 `index.html` 注入启动闭包 `modulepreload`（**替换 dist 后必须重跑**） |
 | `harmony/tools/startup_smoke.sh` | 启动冒烟：`force-stop → hilog -r → aa start → 抓 25s → 12 条断言`。`--mode warm\|cold\|auto`、`--log`（离线重跑断言，不需设备）、`--serial`；退出码 0/1/2 |
 
@@ -253,6 +257,7 @@ node /storage/Users/currentUser/deveco_tools/hvigor/bin/hvigorw.js \
 - `onConsole` 必须返回 boolean
 - `WebResourceRequest` 用 `getRequestUrl()`，不是 `getUrl()`
 - `fs` 没有 `readFileSync`：读文本用 `fs.readTextSync`，读字节用 `openSync` + `statSync().size` + `new ArrayBuffer(n)` + `readSync` + `closeSync`
+- `javaScriptOnDocumentStart` 的每一项都是 `ScriptItem`，**`scriptRules` 是必填字段**：漏了会报 `10505001 Property 'scriptRules' is missing in type '{ script: string; }' but required in type 'ScriptItem'`（本仓库的 file-picker 那条曾经漏着，在它变成数组最后一项时才被编译器抓到；注入 DOM 的脚本统一写 `scriptRules: ['*']`）。
 - `@ohos.net.http` 的 `response.header` 是 `Object`，需 `as Record<string, string>` 且**键名大小写不敏感**（用 `Object.keys` 逐个 `toLowerCase()` 比对）
 
 ### ArkWeb / 启动链路
@@ -268,8 +273,41 @@ node /storage/Users/currentUser/deveco_tools/hvigor/bin/hvigorw.js \
   - 始终把**有效外观**显式写进应用 colorMode（`context.setColorMode`）并同步 `setWindowSystemBarProperties`；`'system'` 不能留空（留空 dock 回退白色）。旧结论「应用侧不可控」是错的——白色来自 `applySystemBarColor` 里 `savedTheme === 'dark'` 的粗糙判断，且该函数只在最大化时调用，所以表现为"一最大化就变白"。
   - `setColorMode()` 会**同步重入** `onConfigurationUpdate`，故 `lastAppliedColorMode` 必须在调用**之前**置位，否则无限递归 → `RangeError: Stack overflow`（按致命 JS 错误杀进程）。
   - 桥接：`dbxNativeWindow.syncSystemAppearance()`（web 每秒轮询，native 重读系统态并重刷 chrome，返回有效外观）、`getEffectiveAppearance()`、`setAppearanceFromWeb()`（web→native 只同步标题按钮色）；native 同时写 AppStorage `dbx_system_dark` 供启动页用。
+- **⚠️ 注入脚本写在 ArkTS 模板字符串里时，反斜杠会被先解开（2026-09-19 踩过）**：`FilePickerWebScript.ets` 的脚本体是反引号模板字符串，JS 里写 `'\n'` 会被 ArkTS 先变成真换行，于是页面里出现断行的字符串字面量 → `hilog` 只留一句 `Uncaught SyntaxError: Invalid or unexpected token`，**而 `node --check` 对提取出来的字符串反而是通过的**（提取的是未解开的源码），极易误判。要在 JS 里得到 `\n` 必须写 `\\n`。这也是 `Index.ets` 里那些注入脚本一律用 `'...' + '...'` 拼接的原因。
+  - **同一类坑：脚本体里不能出现反引号**（2026-09-19 又踩一次）。我在 JS 注释里写了 `` // `<Documents>/DBX`: ... ``，那个反引号**直接终止了 ArkTS 的模板字符串**，后半段源码变成表达式 → 编译/运行时报 `Invalid regular expression: missing /`（因为 `//` 已经不在注释上下文里了）。规矩：模板字符串脚本体里**只用引号，不用反引号**；注释里也别用。写完用"提取 + `new Function`"自测（见下）能提前发现。
 - **`import lazy` 用于 `libdbx_ohos.so`**：46MB 的 `.so` 只在首次调用 `NativeBridge` 时 dlopen（API ≥ 12 直接可用）。`NativeBridge.isAvailable()` 内部 try/catch，加载失败降级 ArkTS 服务而不是中断启动。
 - **启动页隐藏**：`#root` 有子节点即隐藏（= Vue mount，早于 FCP）；兜底 `onPageEnd+400ms`，主题探测最多 10 次、硬上限 60 次。不要把隐藏时机改到"等 FCP"，那会更晚。
+- **⚠️ Web 组件只保留最后一次 `javaScriptProxy` 注册（2026-09-19 真机实测）**：同一个 `Web()` 上链式写多个 `.javaScriptProxy({...})`，**只有最后一个对象在页面里存在**，前面的会被静默顶掉。当时加了第三个（`dbxNativeFilePicker`）后 `window.dbxNativeWindow` 直接消失 → 注入的 `ensureSpacing()` 拿不到 `getTitleButtonReserveWidth()`、`padding-right` 退化成 8px → **工具栏右侧按钮压到系统窗口按钮上**（用户报的"工具栏改坏了"）。现在**所有页面可见的原生方法都必须挂在一个对象上**：`services/ShellBridge.ets`（聚合 WindowBridge + FilePickerBridge），注册名仍叫 `dbxNativeWindow`，因为**已构建的前端 dist 里硬编码了 `globalThis.dbxNativeWindow`**（`openExternal` / `toggleMaximize` / `startMove`），而 dist 不能本地重建。**加新的原生桥方法请加在 `ShellBridge` 上并补 methodList，不要再加第二个 `javaScriptProxy`。**
+  - **顺带发现的既有 bug**：`window.dbxNativePrefs`（`WebPrefsBridge`）从加上第二个注册起就一直是 `undefined`，即"原生 Preferences 主题持久化"这条路径**实际从未生效**（一直靠 localStorage 兜底）。当前决定**不在这次回归修复里顺带打开它**（会改变主题持久化行为）；要修就把 `getPref/savePref` 挪进 `ShellBridge`，并把 `prefsRestoreScript` 的查表改成 `window.dbxNativePrefs||window.dbxNativeWindow`。
+
+### HarmonyOS 用户文件访问（本地数据库文件，2026-09-19 实测）
+
+结论先行：**要么文件待在应用有目录级权限的目录里，要么让用户「授权一个文件夹」**。Picker 的临时授权只覆盖单个文件，而 SQLite 还要在同目录建 `-journal`/`-wal`，所以单文件授权用不了。
+
+- **为什么单文件授权不行**：`select()` 的 URI 只是临时授权（旧文档写"临时只读"、现行文档写"临时读写"），范围是**那一个文件**；SQLite 需要**同目录新建 `-journal`/`-wal`/`-shm`**。真机现象（用户实测）：从 `py_project/py_test/` 选中的库能打开一次，点"表"报 `unable to open database file`；重启后 `failed to open file: Operation not permitted (os error 1)`。**判据必须是"目录能不能写"**（`ensureWritableDir()` 真建一个探针文件再删），不是"文件能不能打开"——临时授权下打开会成功，建兄弟文件会失败。
+- ✅ **目录授权（本项目采用，2026-09-19 真机验证通过）**：
+  1. `ohos.permission.FILE_ACCESS_PERSIST`（`system_grant` + `normal` + provisionEnable）**只要写进 `module.json5` 就会被授予**：实测装机没有 `9568289`，`bm dump -n io.github.getz110.dbx` 里能看到它。那条"声明了权限但没 ACL 就装不上"的约束只针对 `system_basic` 之类的受限权限。
+  2. 「授权文件夹」按钮 → `DocumentSelectOptions.selectMode = picker.DocumentSelectMode.FOLDER`（2in1；`FileManagement.UserFileService.FolderSelection`）→ 拿到文件夹 URI。
+  3. `fileShare.persistPermission([{ uri, operationMode: READ_MODE | WRITE_MODE }])` 持久化，并把 `{uri, path}` 记进 `ThemePrefs`（key `dbx-granted-folders`，一行一条 `uri|path`，见下方 XML 控制字符那条）。
+  4. **每次启动 + 每次回前台（`onPageShow`）都必须 `fileShare.activatePermission(...)`** —— 持久化的授权**不会自动生效**。这是最容易漏的一步：漏了就表现为"重启后 `Operation not permitted`"，而 `checkPersistentPermission()` 仍然返回 `true`（实测重装升级后也是 `true`）。
+  5. 激活之后该文件夹**按路径递归可读写**：实测授权 `/storage/Users/currentUser` 后，在 `/storage/Users/currentUser/py_project/py_test` 里建/写/删文件全部 OK → SQLite 可以**就地**建 journal、建表、插数据，**不需要任何副本**。
+- **另一条路（未采用）**：`ohos.permission.ACCESS_USER_FULL_DISK`（`grantMode: manual_settings` + `system_basic` + since API 22）= 设置里那个「允许访问全盘文件」开关。第三方应用确实拿得到（真机上 `com.oray.sunloginclient`、`com.tencent.workbuddy` 持有），但要走 AGC 受限 ACL 审批 + 换签名 profile，用户还得去设置里手动打开；目录授权零审批，所以本项目走目录授权。
+- **允许的位置**：`<Documents>/DBX`（受 Documents 目录权限控制，见下「授权目录管理」）+ 所有已授权文件夹。选到别处返回 `status='outside'` 直接拒绝，**刻意不做静默复制**——复制会让"我明明选的 xxx，插入数据后 xxx 没变"成为可能，用户明确否掉了那条路。
+- **DocumentViewPicker 无法被锁在某个目录**（最近/桌面/文档/下载 都是系统 UI），所以"限制"只能是"默认定位 + 选完硬校验"。
+- **❌ 「接力式授权」已实现过又拆掉（2026-09-19，别再走这条）**：做过一版"选到未授权目录 → 自动再弹一次定位到该目录的文件夹选择器 → 授权后自动复用原文件"，功能上确实通了（真机验证：授权被持久化、原文件可用），但**体验是连续两个系统弹窗**，用户直接反馈"更怪了"。现在 `outside` 只出一条红色可操作提示（"该目录未授权…请点右侧「授权文件夹」选中这个目录（只需一次），再重新选择文件。所选文件：<path>"），**顺序完全由用户自己控制**。对应地 `authorizeParentFolder` / `useExistingPath` 两个桥方法已删除（`window.dbxNativeWindow` 上不再有它们）。
+- **`defaultFilePathUri` 只定位、不限制**：选择文件和文件夹的两个 picker 都锚定在"上次用过的目录"（Preferences key `dbx-last-dir`，成功选中/授权时写入；为空时回退到最近授权的文件夹 → `<Documents>/DBX`），省掉每次重新导航。
+- **dbx 的 sqlite 驱动不会创建数据库文件**：对一个不存在的路径 `POST /api/connection/test` 直接报 `File does not exist: <path>`。所以「新建数据库文件」必须走 `DocumentViewPicker.save()`（系统会真的创建空文件）——不能只是拼一个路径返回。
+- **`persistPermission` 只接受「系统选择器当次返回的 URI」（2026-09-19 实测）**：即使父目录**已经**被授权、`checkPersistentPermission` 返回 `true`，拿别的 URI（比如选中的文件本身）去 `persistPermission` 依旧 `13900001 Operation not permitted`。也就是说**静默授权在平台层面不存在**：没有系统选择器就没有可持久化的 URI，应用无法自己"确认"一个目录。想弹一个"只有确认/取消"的授权框也做不到——能弹确认框的 `requestPermissionsFromUser` 授权的是**权限**而非**目录**，而唯一覆盖目录的 `ACCESS_USER_FULL_DISK` 是 `manual_settings`（跳系统设置页）。**系统选择器本身就是那个授权弹窗。**
+- ✅ **「授权目录管理」面板（工具栏，2026-09-19 新增）**：`FolderManagerWebScript.ets` 注入一个工具栏按钮和一个自绘浮层。面板内容：
+  - **`Documents/DBX` 一行显示实时授权状态**（`documentsStatus()` → `'<permission>|<writable>'`，`permission ∈ granted|denied|unknown`，`writable` 由 `ensureWritableDir()` 探针文件实测）。**这里曾经写"始终可用、不需要授权"是错的**：`Documents` 目录受 `ohos.permission.READ_WRITE_DOCUMENTS_DIRECTORY` 管，它是 **user_grant** 权限（装机时靠 profile 的 ACL 可授权，但用户能在系统设置里撤销，代码在每次选文件前也还会 `requestPermissionsFromUser`）。所以面板每次刷新都重新查一次，缺权限/不可写时给一个「去授权…」按钮（走 `requestDocumentsPermission(requestId)` → 系统权限对话框 → 回来刷新）。实测本机 `granted|yes`；用假桥把状态改成 `denied|no` 验证过分支与按钮。
+  - 已授权目录每条一个**两步撤销**（点一次变「确认撤销」，3 秒内再点才生效）；「新增授权目录…」复用 `pickDatabaseFolder`。
+  - **刻意不列每个目录里的库文件**（用户明确说不需要）：平台本来也无法枚举"已持久化授权"（`fileShare` 只能拿已知 URI 去 `checkPersistentPermission`，不能反查），逐目录列文件是噪音。**知识保留**：已授权目录可以直接 `fs.listFileSync()` + `statSync().isFile()` 列表（`py_test`、`Documents/DBX` 实测都行），将来要做"库选择面板"可以照此实现。
+  - 浮层要补偿 UI 缩放：`html{zoom:n}` 下 `position:fixed` 的坐标系也是缩放后的，所以用 `width:calc(100vw / var(--dbx-fm-zoom,1))`（`--dbx-fm-zoom` 由面板监听 `dbx:ui-scale-applied` 维护）。实测 1.0 / 1.3 档下浮层 rect 都精确等于视口（1101×734）。
+  - **撤销语义**：`revokeGrantedFolder(path)` 先**同步**从 Preferences 里删掉该条（页面立刻重读 `grantedFolders()` 即生效），再后台 `deactivatePermission` + `revokePermission`。持久化授权**只有 `activatePermission()` 才会生效**，条目一删下次启动就不再激活 = 访问确实断掉（即使后台那次平台调用失败也只留下无用的持久化记录）。返回 `'ok' | 'notfound'`。
+  - 面板与文件选择器共用回包通道 `window.__dbxFilePickerDeliver`：面板**在调用期间临时包一层**（回包后还原）来收结果，因此不依赖两条注入脚本的先后顺序。
+- **⚠️ Preferences 是 XML 文件，值里不能有裸控制字符（2026-09-19 踩过，代价很大）**：授权列表最初用 `\u0001`/`\u0002` 当分隔符，写进 Preferences 后 XML 解析失败 → 框架把文件隔离成 `dbx_theme_prefs.broken` 并**整体重置该存储**，连 `dbx-theme` / `dbx-dist-fingerprint` 一起丢（表现为"授权重启后失效 + 主题回默认 + 冷启动一次"）。现在改用一行一条 `uri|path`（只含可打印字符 + `\n`，XML 合法；picker URI 不含 `|`），并在 `ThemePrefs.savePref` 加了守卫：值里出现 0x00–0x1F（`\t`/`\n`/`\r` 除外）就拒绝写入并打 error。**任何往 Preferences 写值的地方都要守这条。**
+- **`fileIo.copyFile(uri, dest)` 不支持 `file://docs/...` URI**（真机报 `No such file or directory`）；要复制用户文件必须 `openSync(uri, READ_ONLY)` 拿 fd 再 `copyFile(srcFd, dstFd)`（本轮不做复制，留作以后做"回写/导出"的参考）。
+- **`Environment.getUserDocumentDir()`** 返回 `/storage/Users/currentUser/Documents`（`hdc shell` 里看不到这个路径，那是应用的授权视图）。
 
 ### UI 缩放（2026-09-13 两次修正，别再走弯路）
 
@@ -494,6 +532,27 @@ cp target/release/libdbx_ohos.so ../../harmony/dbxohos/entry/libs/arm64-v8a/libd
   ```
 
 ## 验证方式
+
+### 用 CDP 直接驱动页面（验证注入脚本，2026-09-19 打通）
+
+注入脚本（文件路径行、uiScale、表头）的验证过去靠"临时塞一段 self-test 再重建+人工点"或靠人肉点，都慢。现在可以走 ArkWeb 的 CDP：
+
+1. 临时把 `common/Constants.ets` 的 `ENABLE_WEB_DEBUG` 改成 `true`，构建装机（**验完改回 `false`**：开着装出来的包，任何能连 hdc 的人都能注入 JS 读数据库凭据，别随 release 发出去）；
+2. 找**本应用**的 devtools socket（设备上可能同时有别的 webview，比如浏览器）：
+
+   ```bash
+   PID=$(hdc shell pidof io.github.getz110.dbx | tr -d '\r')
+   hdc shell "cat /proc/net/unix" | grep -o "webview_devtools_remote_[0-9]*" | sort -u
+   hdc fport tcp:9500 localabstract:webview_devtools_remote_$PID
+   curl -s http://127.0.0.1:9500/json/list | grep -E '"url"|"title"'   # 认 127.0.0.1:4224
+   ```
+
+   注意 socket 名里的数字**不一定等于应用 pid**（ArkWeb 可能用渲染进程号），所以不要写死；`hdc fport` 报 `TCP Port listen failed` 就是本地端口被上一次转发占着，先 `hdc fport rm tcp:<port>`（正确写法是 `hdc fport rm tcp:<本地端口> <远端描述>`，只给本地端口会报 `ruler is not exist`）。`.tmp/cdp-up.sh` 是这套探测的封装：遍历所有 devtools socket，返回第一个页面 URL 是 `127.0.0.1:4224` 的本地端口 —— 装机重启后 socket 会变，**每次验之前都重跑它**。
+3. `.tmp/cdp.js`（本会话写的驱动，未入库）：`node .tmp/cdp.js --port 9500 --url 4224 --file .tmp/probe.js` —— 内部用 Node 内置 `WebSocket` 发 `Runtime.evaluate`（`awaitPromise` + `userGesture`），脚本里可以 `await sleep()`、点按钮、读 DOM，把结果 `JSON.stringify` 回来。
+
+**已验证可用的手法**：把 `window.dbxNativeWindow` 换成页面内的假桥（`Object.defineProperty` 可覆盖），再 `click()` 注入按钮 → 就能在**完全不弹系统窗口**的前提下，把"选到未授权目录"/"授权成功"/"撤销"等 native 回调分支全跑一遍。需要真系统弹窗的步骤（真的选文件/选文件夹）仍然只能人工点。
+
+**⚠️ 假桥一定要在 `finally` 里还原（2026-09-19 被坑过）**：脚本中途抛异常会把假桥留在页面里，此后所有"原生调用"都打到假桥上，看起来就像原生方法坏了（当时 `revokeGrantedFolder` 对任意参数都回 `'ok'`、`grantedFolders()` 回空串，我差点去改一个根本没坏的桥）。排查口诀：**先让页面重载（重装/重启应用）再复测**——如果重载后行为正常，那就是上一次探测留下的假桥，不是原生 bug。
 
 ### 测试设备连接顺序（约定）
 
